@@ -1,0 +1,19 @@
+from fastapi import FastAPI
+from app.api.health import router as health_router
+from app.api.telegram import router as telegram_router
+from app.api.groups import router as groups_router
+from app.api.join_requests import router as join_requests_router
+from app.api.users import router as users_router
+
+
+app = FastAPI()
+
+app.include_router(health_router, prefix="/api/v1")
+app.include_router(telegram_router, prefix="/api/v1")
+app.include_router(groups_router, prefix="/api/v1")
+app.include_router(join_requests_router, prefix="/api/v1")
+app.include_router(users_router, prefix="/api/v1")
+
+@app.get("/health")
+def health():
+    return {"ok": True}
