@@ -2,10 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
-from app.db.models import Group, GroupMember, User
-
+from app.db.models import Group, GroupMember, User, JoinRequest
 from app.db.session import get_session
-from app.db.models import Group
 
 router = APIRouter(prefix="/groups", tags=["groups"])
 
@@ -13,8 +11,10 @@ router = APIRouter(prefix="/groups", tags=["groups"])
 class GroupCreateIn(BaseModel):
     bot_id: int
     name: str
-    created_by: int | None = None  # user_id адміна (поки без JWT)
-
+    created_by: int | None = None
+    
+class GroupUpdateIn(BaseModel):
+    name: str
 
 @router.post("")
 async def create_group(data: GroupCreateIn, session: AsyncSession = Depends(get_session)):
@@ -75,3 +75,36 @@ async def remove_member(group_id: int, user_id: int, session: AsyncSession = Dep
 
     await session.commit()
     return {"ok": True, "user_telegram_id": user.telegram_id, "group_name": group.name}
+
+@router.patch("/{group_id}")
+async def rename_group(group_id: int, data: GroupUpdateIn, session: AsyncSession = Depends(get_session)):
+    new_name = data.name.strip()
+    if not new_name:
+        raise HTTPException(status_code=400, detail="Name is empty")
+
+    res = await session.execute(select(Group).where(Group.id == group_id))
+    group = res.scalar_one_or_none()
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+
+    group.name = new_name
+    await session.commit()
+    return {"ok": True, "id": group.id, "name": group.name}
+
+@router.delete("/{group_id}")
+async def delete_group(group_id: int, session: AsyncSession = Depends(get_session)):
+    # перевірка існування групи
+    res = await session.execute(select(Group).where(Group.id == group_id))
+    group = res.scalar_one_or_none()
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+
+    # чистимо залежності (щоб не було FK проблем)
+    await session.execute(delete(GroupMember).where(GroupMember.group_id == group_id))
+    await session.execute(delete(JoinRequest).where(JoinRequest.group_id == group_id))
+
+    # видаляємо групу
+    await session.execute(delete(Group).where(Group.id == group_id))
+    await session.commit()
+
+    return {"ok": True, "deleted_group_id": group_id}

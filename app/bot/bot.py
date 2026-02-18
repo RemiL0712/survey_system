@@ -15,6 +15,9 @@ API_BASE_URL = os.getenv("API_BASE_URL", "http://api:8000/api/v1").rstrip("/")
 BOT_ID = int(os.getenv("BOT_ID", "1"))
 ADMIN_TG_ID = int(os.getenv("ADMIN_TG_ID", "0"))
 
+# ---------- Admin state ----------
+admin_state: dict[int, dict] = {}
+
 
 # ---------- Keyboards ----------
 def kb_main(is_admin: bool = False):
@@ -22,8 +25,10 @@ def kb_main(is_admin: bool = False):
     kb.button(text="📋 Групи", callback_data="groups")
     if is_admin:
         kb.button(text="🕓 Pending заявки", callback_data="pending")
+        kb.button(text="⚙️ Керування групами", callback_data="admin_groups")
     kb.adjust(1)
     return kb.as_markup()
+
 
 def kb_groups(groups: list[dict]):
     kb = InlineKeyboardBuilder()
@@ -49,6 +54,33 @@ def kb_admin_request(req_id: int):
     kb.button(text="✅ Підтвердити", callback_data=f"approve:{req_id}")
     kb.button(text="❌ Відхилити", callback_data=f"reject:{req_id}")
     kb.adjust(2)
+    return kb.as_markup()
+
+
+def kb_admin_groups():
+    kb = InlineKeyboardBuilder()
+    kb.button(text="➕ Створити групу", callback_data="group_create")
+    kb.button(text="✏️ Перейменувати групу", callback_data="group_rename_pick")
+    kb.button(text="🗑 Видалити групу", callback_data="group_delete_pick")
+    kb.button(text="⬅️ Назад", callback_data="back")
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+def kb_groups_pick(groups: list[dict], prefix: str):
+    kb = InlineKeyboardBuilder()
+    for g in groups:
+        kb.button(text=g["name"], callback_data=f"{prefix}:{g['id']}")
+    kb.button(text="⬅️ Назад", callback_data="admin_groups")
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+def kb_confirm_delete(group_id: int):
+    kb = InlineKeyboardBuilder()
+    kb.button(text="✅ Так, видалити", callback_data=f"delete_confirm:{group_id}")
+    kb.button(text="❌ Скасувати", callback_data="admin_groups")
+    kb.adjust(1)
     return kb.as_markup()
 
 
@@ -101,6 +133,14 @@ async def main():
         await m.answer("Готово. Обери дію:", reply_markup=kb_main(is_admin))
 
     # --- main nav ---
+    @dp.callback_query(F.data == "admin_groups")
+    async def admin_groups(cb: CallbackQuery):
+        if cb.from_user.id != ADMIN_TG_ID:
+            await cb.answer("Нема доступу", show_alert=True)
+            return
+        await cb.message.edit_text("⚙️ Керування групами:", reply_markup=kb_admin_groups())
+        await cb.answer()
+
     @dp.callback_query(F.data == "back")
     async def back(cb: CallbackQuery):
         is_admin = cb.from_user.id == ADMIN_TG_ID
@@ -109,11 +149,13 @@ async def main():
 
     @dp.callback_query(F.data == "groups")
     async def groups(cb: CallbackQuery):
-        await cb.answer("Завантажую...")
+        await cb.answer()
         groups_list = await api_get(client, "/groups", params={"bot_id": BOT_ID})
         if not groups_list:
-            await cb.message.edit_text("Груп поки немає.", reply_markup=kb_main())
+            is_admin = cb.from_user.id == ADMIN_TG_ID
+            await cb.message.edit_text("Груп поки немає.", reply_markup=kb_main(is_admin))
             return
+
         await cb.message.edit_text("Оберіть групу:", reply_markup=kb_groups(groups_list))
 
     @dp.callback_query(F.data.startswith("group:"))
@@ -129,7 +171,7 @@ async def main():
     # --- join request ---
     @dp.callback_query(F.data.startswith("join:"))
     async def join(cb: CallbackQuery):
-        await cb.answer("Відправляю...")
+        await cb.answer()
         group_id = int(cb.data.split(":")[1])
 
         try:
@@ -151,7 +193,6 @@ async def main():
                 await bot.send_message(ADMIN_TG_ID, text, reply_markup=kb_admin_request(req_id))
 
         except httpx.HTTPStatusError as e:
-            # friendly messages
             try:
                 detail = e.response.json().get("detail", "")
             except Exception:
@@ -174,7 +215,7 @@ async def main():
             await cb.answer("Нема доступу", show_alert=True)
             return
 
-        await cb.answer("Завантажую...")
+        await cb.answer()
         group_id = int(cb.data.split(":")[1])
 
         try:
@@ -185,8 +226,8 @@ async def main():
                 return
 
             kb = InlineKeyboardBuilder()
+            lines: list[str] = []
 
-            lines = []
             for m in members_list[:20]:
                 uname = f"@{m.get('username')}" if m.get("username") else f"tg:{m['telegram_id']}"
                 lines.append(f"• {uname}")
@@ -196,140 +237,21 @@ async def main():
 
             await cb.message.answer(
                 "👥 Учасники (натисни щоб видалити):\n\n" + "\n".join(lines),
-                reply_markup=kb.as_markup()
+                reply_markup=kb.as_markup(),
             )
 
         except Exception as e:
             logging.exception("members handler error: %s", e)
             await cb.message.answer("Помилка: не вдалося отримати список учасників.")
 
-    # --- approve/reject (admin) ---
-    @dp.callback_query(F.data.startswith("approve:"))
-    async def approve(cb: CallbackQuery):
-        if cb.from_user.id != ADMIN_TG_ID:
-            await cb.answer("Нема доступу", show_alert=True)
-            return
-
-        await cb.answer("Оновлюю...")
-        req_id = int(cb.data.split(":")[1])
-
-        try:
-            admin_user_id = await get_user_id_by_tg(client, cb.from_user.id)
-            resp = await api_patch(
-                client,
-                f"/join-requests/{req_id}/approve",
-                {"admin_id": admin_user_id},
-            )
-
-            # Якщо вже оброблено
-            if resp.get("already_processed"):
-                try:
-                    await cb.message.edit_reply_markup(reply_markup=None)
-                except Exception:
-                    pass
-
-                try:
-                    await cb.message.edit_text(
-                        f"ℹ️ Заявка вже оброблена: {resp['status']}"
-                    )
-                except Exception:
-                    pass
-
-                return
-
-            # Повідомити користувача
-            try:
-                await bot.send_message(
-                    resp["user_telegram_id"],
-                    f"✅ Вашу заявку до групи «{resp['group_name']}» прийнято."
-                )
-            except Exception:
-                pass
-
-            # Закрити кнопки
-            try:
-                await cb.message.edit_reply_markup(reply_markup=None)
-            except Exception:
-                pass
-
-            # Оновити текст
-            try:
-                await cb.message.edit_text(
-                    f"✅ Заявку #{req_id} підтверджено"
-                )
-            except Exception:
-                pass
-
-        except Exception as e:
-            logging.exception("approve error: %s", e)
-            await cb.message.answer("Помилка approve.")
-
-
-    @dp.callback_query(F.data.startswith("reject:"))
-    async def reject(cb: CallbackQuery):
-        if cb.from_user.id != ADMIN_TG_ID:
-            await cb.answer("Нема доступу", show_alert=True)
-            return
-
-        await cb.answer("Оновлюю...")
-        req_id = int(cb.data.split(":")[1])
-
-        try:
-            admin_user_id = await get_user_id_by_tg(client, cb.from_user.id)
-            resp = await api_patch(
-                client,
-                f"/join-requests/{req_id}/reject",
-                {"admin_id": admin_user_id},
-            )
-
-            if resp.get("already_processed"):
-                try:
-                    await cb.message.edit_reply_markup(reply_markup=None)
-                except Exception:
-                    pass
-
-                try:
-                    await cb.message.edit_text(
-                        f"ℹ️ Заявка вже оброблена: {resp['status']}"
-                    )
-                except Exception:
-                    pass
-
-                return
-
-            try:
-                await bot.send_message(
-                    resp["user_telegram_id"],
-                    f"❌ Вашу заявку до групи «{resp['group_name']}» відхилено."
-                )
-            except Exception:
-                pass
-
-            try:
-                await cb.message.edit_reply_markup(reply_markup=None)
-            except Exception:
-                pass
-
-            try:
-                await cb.message.edit_text(
-                    f"❌ Заявку #{req_id} відхилено"
-                )
-            except Exception:
-                pass
-
-        except Exception as e:
-            logging.exception("reject error: %s", e)
-            await cb.message.answer("Помилка reject.")
-
-
+    # --- kick (admin) ---
     @dp.callback_query(F.data.startswith("kick:"))
     async def kick(cb: CallbackQuery):
         if cb.from_user.id != ADMIN_TG_ID:
             await cb.answer("Нема доступу", show_alert=True)
             return
 
-        await cb.answer("Видаляю...")
-
+        await cb.answer()
         _, group_id, user_id = cb.data.split(":")
         group_id = int(group_id)
         user_id = int(user_id)
@@ -337,7 +259,7 @@ async def main():
         try:
             r = await client.delete(f"{API_BASE_URL}/groups/{group_id}/members/{user_id}", timeout=20)
             r.raise_for_status()
-            resp = r.json()  # тут буде {"ok": true, "user_telegram_id": ..., "group_name": ...}
+            resp = r.json()  # {"ok": true, "user_telegram_id": ..., "group_name": ...}
 
             await cb.message.answer("✅ Учасника видалено.")
 
@@ -345,7 +267,7 @@ async def main():
             try:
                 await bot.send_message(
                     resp["user_telegram_id"],
-                    f"ℹ️ Вас видалено з групи «{resp['group_name']}»."
+                    f"ℹ️ Вас видалено з групи «{resp['group_name']}».",
                 )
             except Exception:
                 pass
@@ -354,20 +276,115 @@ async def main():
             logging.exception("kick error: %s", e)
             await cb.message.answer("Помилка видалення.")
 
+    # --- approve/reject (admin) ---
+    @dp.callback_query(F.data.startswith("approve:"))
+    async def approve(cb: CallbackQuery):
+        if cb.from_user.id != ADMIN_TG_ID:
+            await cb.answer("Нема доступу", show_alert=True)
+            return
+
+        await cb.answer()
+        req_id = int(cb.data.split(":")[1])
+
+        try:
+            admin_user_id = await get_user_id_by_tg(client, cb.from_user.id)
+            resp = await api_patch(client, f"/join-requests/{req_id}/approve", {"admin_id": admin_user_id})
+
+            if resp.get("already_processed"):
+                try:
+                    await cb.message.edit_reply_markup(reply_markup=None)
+                except Exception:
+                    pass
+                try:
+                    await cb.message.edit_text(f"ℹ️ Заявка вже оброблена: {resp['status']}")
+                except Exception:
+                    pass
+                return
+
+            # notify user
+            try:
+                await bot.send_message(
+                    resp["user_telegram_id"],
+                    f"✅ Вашу заявку до групи «{resp['group_name']}» прийнято.",
+                )
+            except Exception:
+                pass
+
+            # close buttons + update text
+            try:
+                await cb.message.edit_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+            try:
+                await cb.message.edit_text(f"✅ Заявку #{req_id} підтверджено")
+            except Exception:
+                pass
+
+        except Exception as e:
+            logging.exception("approve error: %s", e)
+            await cb.message.answer("Помилка approve.")
+
+    @dp.callback_query(F.data.startswith("reject:"))
+    async def reject(cb: CallbackQuery):
+        if cb.from_user.id != ADMIN_TG_ID:
+            await cb.answer("Нема доступу", show_alert=True)
+            return
+
+        await cb.answer()
+        req_id = int(cb.data.split(":")[1])
+
+        try:
+            admin_user_id = await get_user_id_by_tg(client, cb.from_user.id)
+            resp = await api_patch(client, f"/join-requests/{req_id}/reject", {"admin_id": admin_user_id})
+
+            if resp.get("already_processed"):
+                try:
+                    await cb.message.edit_reply_markup(reply_markup=None)
+                except Exception:
+                    pass
+                try:
+                    await cb.message.edit_text(f"ℹ️ Заявка вже оброблена: {resp['status']}")
+                except Exception:
+                    pass
+                return
+
+            # notify user
+            try:
+                await bot.send_message(
+                    resp["user_telegram_id"],
+                    f"❌ Вашу заявку до групи «{resp['group_name']}» відхилено.",
+                )
+            except Exception:
+                pass
+
+            # close buttons + update text
+            try:
+                await cb.message.edit_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+            try:
+                await cb.message.edit_text(f"❌ Заявку #{req_id} відхилено")
+            except Exception:
+                pass
+
+        except Exception as e:
+            logging.exception("reject error: %s", e)
+            await cb.message.answer("Помилка reject.")
+
+    # --- pending list (admin) ---
     @dp.callback_query(F.data == "pending")
     async def pending(cb: CallbackQuery):
         if cb.from_user.id != ADMIN_TG_ID:
             await cb.answer("Нема доступу", show_alert=True)
             return
 
-        await cb.answer("Завантажую...")
+        await cb.answer()
         items = await api_get(client, "/join-requests/pending", params={"bot_id": BOT_ID})
 
         if not items:
             await cb.message.answer("Немає pending заявок.")
             return
 
-        # показуємо останні 20
         for it in items[:20]:
             text = (
                 "🕓 Pending заявка\n"
@@ -377,11 +394,152 @@ async def main():
             )
             await cb.message.answer(text, reply_markup=kb_admin_request(it["id"]))
 
+    # --- admin: create group ---
+    @dp.callback_query(F.data == "group_create")
+    async def group_create(cb: CallbackQuery):
+        if cb.from_user.id != ADMIN_TG_ID:
+            await cb.answer("Нема доступу", show_alert=True)
+            return
+
+        admin_state[cb.from_user.id] = {"mode": "create_group"}
+        await cb.message.answer("Введіть назву нової групи (одним повідомленням):")
+        await cb.answer()
+
+    # --- admin: rename group flow ---
+    @dp.callback_query(F.data == "group_rename_pick")
+    async def group_rename_pick(cb: CallbackQuery):
+        if cb.from_user.id != ADMIN_TG_ID:
+            await cb.answer("Нема доступу", show_alert=True)
+            return
+
+        await cb.answer()
+        groups_list = await api_get(client, "/groups", params={"bot_id": BOT_ID})
+
+        if not groups_list:
+            await cb.message.answer("Груп поки немає.")
+            return
+
+        await cb.message.answer(
+            "Оберіть групу для перейменування:",
+            reply_markup=kb_groups_pick(groups_list, "rename_group"),
+        )
+
+    @dp.callback_query(F.data.startswith("rename_group:"))
+    async def rename_group_choose(cb: CallbackQuery):
+        if cb.from_user.id != ADMIN_TG_ID:
+            await cb.answer("Нема доступу", show_alert=True)
+            return
+
+        await cb.answer()
+        group_id = int(cb.data.split(":")[1])
+        admin_state[cb.from_user.id] = {"mode": "rename_group", "group_id": group_id}
+        await cb.message.answer(f"Введіть нову назву для групи id={group_id}:")
+
+    # --- admin: delete group flow ---
+    @dp.callback_query(F.data == "group_delete_pick")
+    async def group_delete_pick(cb: CallbackQuery):
+        if cb.from_user.id != ADMIN_TG_ID:
+            await cb.answer("Нема доступу", show_alert=True)
+            return
+
+        await cb.answer()
+        groups_list = await api_get(client, "/groups", params={"bot_id": BOT_ID})
+
+        if not groups_list:
+            await cb.message.answer("Груп поки немає.")
+            return
+
+        await cb.message.answer(
+            "Оберіть групу для видалення:",
+            reply_markup=kb_groups_pick(groups_list, "delete_group"),
+        )
+
+    @dp.callback_query(F.data.startswith("delete_group:"))
+    async def delete_group_choose(cb: CallbackQuery):
+        if cb.from_user.id != ADMIN_TG_ID:
+            await cb.answer("Нема доступу", show_alert=True)
+            return
+
+        await cb.answer()
+        group_id = int(cb.data.split(":")[1])
+        await cb.message.answer(
+            f"⚠️ Видалити групу id={group_id}?",
+            reply_markup=kb_confirm_delete(group_id),
+        )
+
+    @dp.callback_query(F.data.startswith("delete_confirm:"))
+    async def delete_group_confirm(cb: CallbackQuery):
+        if cb.from_user.id != ADMIN_TG_ID:
+            await cb.answer("Нема доступу", show_alert=True)
+            return
+
+        await cb.answer()
+        group_id = int(cb.data.split(":")[1])
+
+        try:
+            r = await client.delete(f"{API_BASE_URL}/groups/{group_id}", timeout=20)
+            r.raise_for_status()
+            await cb.message.edit_text(f"🗑 Групу id={group_id} видалено.")
+        except Exception as e:
+            logging.exception("delete_group_confirm error: %s", e)
+            await cb.message.answer("❌ Помилка видалення групи.")
+
+    # --- admin text input handler (create/rename) ---
+    @dp.message()
+    async def admin_text_handler(m: Message):
+        if m.from_user.id != ADMIN_TG_ID:
+            return
+
+        st = admin_state.get(m.from_user.id)
+        if not st:
+            return
+
+        text = (m.text or "").strip()
+        if not text:
+            await m.answer("Порожня назва. Спробуйте ще раз.")
+            return
+
+        mode = st.get("mode")
+
+        # --- create group ---
+        if mode == "create_group":
+            try:
+                admin_user_id = await get_user_id_by_tg(client, m.from_user.id)
+                g = await api_post(
+                    client,
+                    "/groups",
+                    {"bot_id": BOT_ID, "name": text, "created_by": admin_user_id},
+                )
+                await m.answer(f"✅ Групу створено: {g['name']} (id={g['id']})")
+            except Exception as e:
+                logging.exception("create group error: %s", e)
+                await m.answer("❌ Помилка створення групи.")
+            finally:
+                admin_state.pop(m.from_user.id, None)
+            return
+
+        # --- rename group ---
+        if mode == "rename_group":
+            group_id = int(st["group_id"])
+            try:
+                await api_patch(client, f"/groups/{group_id}", {"name": text})
+                await m.answer("✅ Назву групи змінено.")
+            except Exception as e:
+                logging.exception("rename group error: %s", e)
+                await m.answer("❌ Помилка перейменування.")
+            finally:
+                admin_state.pop(m.from_user.id, None)
+            return
 
     try:
         await dp.start_polling(bot)
     finally:
         await client.aclose()
+        try:
+            await bot.session.close()
+        except Exception:
+            pass
+
 
 if __name__ == "__main__":
     asyncio.run(main())
