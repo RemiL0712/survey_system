@@ -7,6 +7,7 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.exceptions import TelegramBadRequest
 
 logging.basicConfig(level=logging.INFO)
 
@@ -15,9 +16,21 @@ API_BASE_URL = os.getenv("API_BASE_URL", "http://api:8000/api/v1").rstrip("/")
 BOT_ID = int(os.getenv("BOT_ID", "1"))
 ADMIN_TG_ID = int(os.getenv("ADMIN_TG_ID", "0"))
 
-# ---------- Admin state ----------
+# ---------- State ----------
+# admin_state: тільки для адмінських flows (групи + створення опитувань)
 admin_state: dict[int, dict] = {}
+# user_state: тільки для проходження опитувань (text answers)
+user_state: dict[int, dict] = {}
 
+# ---------- Utils ----------
+async def safe_edit(message: Message, text: str, reply_markup=None):
+    """Edit message if possible; ignore 'message is not modified' and fall back to sending a new one."""
+    try:
+        await message.edit_text(text, reply_markup=reply_markup)
+    except TelegramBadRequest as e:
+        if "message is not modified" in str(e).lower():
+            return
+        await message.answer(text, reply_markup=reply_markup)
 
 # ---------- Keyboards ----------
 def kb_main(is_admin: bool = False):
@@ -29,7 +42,6 @@ def kb_main(is_admin: bool = False):
     kb.adjust(1)
     return kb.as_markup()
 
-
 def kb_groups(groups: list[dict]):
     kb = InlineKeyboardBuilder()
     for g in groups:
@@ -38,16 +50,24 @@ def kb_groups(groups: list[dict]):
     kb.button(text="⬅️ Назад", callback_data="back")
     return kb.as_markup()
 
-
-def kb_group_actions(group_id: int, is_admin: bool):
+def kb_group_actions(group_id: int, is_admin: bool, is_member: bool, join_pending: bool = False):
     kb = InlineKeyboardBuilder()
-    kb.button(text="➕ Подати заявку", callback_data=f"join:{group_id}")
+
+    if is_admin or is_member:
+        kb.button(text="🧪 Опитування", callback_data=f"surveys:{group_id}")
+
+    if not is_admin and not is_member:
+        if join_pending:
+            kb.button(text="⏳ Заявка на розгляді", callback_data="noop")
+        else:
+            kb.button(text="➕ Подати заявку", callback_data=f"join:{group_id}")
+
     if is_admin:
         kb.button(text="👥 Учасники", callback_data=f"members:{group_id}")
+
     kb.button(text="⬅️ До груп", callback_data="groups")
     kb.adjust(1)
     return kb.as_markup()
-
 
 def kb_admin_request(req_id: int):
     kb = InlineKeyboardBuilder()
@@ -55,7 +75,6 @@ def kb_admin_request(req_id: int):
     kb.button(text="❌ Відхилити", callback_data=f"reject:{req_id}")
     kb.adjust(2)
     return kb.as_markup()
-
 
 def kb_admin_groups():
     kb = InlineKeyboardBuilder()
@@ -66,7 +85,6 @@ def kb_admin_groups():
     kb.adjust(1)
     return kb.as_markup()
 
-
 def kb_groups_pick(groups: list[dict], prefix: str):
     kb = InlineKeyboardBuilder()
     for g in groups:
@@ -75,7 +93,6 @@ def kb_groups_pick(groups: list[dict], prefix: str):
     kb.adjust(1)
     return kb.as_markup()
 
-
 def kb_confirm_delete(group_id: int):
     kb = InlineKeyboardBuilder()
     kb.button(text="✅ Так, видалити", callback_data=f"delete_confirm:{group_id}")
@@ -83,6 +100,28 @@ def kb_confirm_delete(group_id: int):
     kb.adjust(1)
     return kb.as_markup()
 
+def kb_surveys_back(group_id: int):
+    kb = InlineKeyboardBuilder()
+    kb.button(text="⬅️ Назад", callback_data=f"group:{group_id}")
+    kb.adjust(1)
+    return kb.as_markup()
+
+def kb_survey_start(group_id: int, survey_id: int):
+    kb = InlineKeyboardBuilder()
+    kb.button(text="▶️ Почати", callback_data=f"survey_start:{group_id}:{survey_id}")
+    kb.button(text="⬅️ Назад", callback_data=f"surveys:{group_id}")
+    kb.adjust(1)
+    return kb.as_markup()
+
+def kb_surveys_list(surveys: list[dict], group_id: int, is_admin: bool = False):
+    kb = InlineKeyboardBuilder()
+    for s in surveys:
+        kb.button(text=f"📝 {s.get('title','(без назви)')}", callback_data=f"survey_open:{group_id}:{s['id']}")
+    if is_admin:
+        kb.button(text="➕ Створити опитування", callback_data=f"survey_create:{group_id}")
+    kb.button(text="⬅️ Назад", callback_data=f"group:{group_id}")
+    kb.adjust(1)
+    return kb.as_markup()
 
 # ---------- API helpers ----------
 async def api_post(client: httpx.AsyncClient, path: str, json: dict):
@@ -90,25 +129,120 @@ async def api_post(client: httpx.AsyncClient, path: str, json: dict):
     r.raise_for_status()
     return r.json()
 
-
 async def api_get(client: httpx.AsyncClient, path: str, params: dict | None = None):
     r = await client.get(f"{API_BASE_URL}{path}", params=params, timeout=20)
     r.raise_for_status()
     return r.json()
-
 
 async def api_patch(client: httpx.AsyncClient, path: str, json: dict):
     r = await client.patch(f"{API_BASE_URL}{path}", json=json, timeout=20)
     r.raise_for_status()
     return r.json()
 
+def _extract_user_id(payload: object) -> int | None:
+    """Try to extract internal user id from different API response shapes."""
+    if payload is None:
+        return None
+    if isinstance(payload, int):
+        return payload
+    if isinstance(payload, str):
+        return int(payload) if payload.isdigit() else None
+    if isinstance(payload, dict):
+        for k in ("user_id", "id"):
+            v = payload.get(k)
+            if isinstance(v, int):
+                return v
+            if isinstance(v, str) and v.isdigit():
+                return int(v)
+        if "value" in payload:
+            return _extract_user_id(payload.get("value"))
+        return None
+    if isinstance(payload, list):
+        return _extract_user_id(payload[0]) if payload else None
+    return None
 
-async def get_user_id_by_tg(client: httpx.AsyncClient, telegram_id: int) -> int:
+async def get_user_id_by_tg(
+    client: httpx.AsyncClient,
+    telegram_id: int,
+    username: str | None = None,
+    first_name: str | None = None,
+    last_name: str | None = None,
+) -> int:
+    """Return internal user_id for given telegram_id.
+
+    API may respond with {"user_id": ...} (preferred) or {"id": ...} (legacy).
+    If user is not found, it registers the user via /telegram/register and retries.
+    """
+    # 1) try fetch
+    try:
+        data = await api_get(client, "/users/by-telegram", params={"telegram_id": telegram_id})
+        uid = data.get("user_id") or data.get("id")
+        if uid is not None:
+            return int(uid)
+    except httpx.HTTPStatusError as e:
+        if e.response is None or e.response.status_code != 404:
+            raise
+
+    # 2) register, then refetch
+    payload = {"telegram_id": telegram_id}
+    if username:
+        payload["username"] = username
+    if first_name:
+        payload["first_name"] = first_name
+    if last_name:
+        payload["last_name"] = last_name
+
+    await api_post(client, "/telegram/register", json=payload)
+
     data = await api_get(client, "/users/by-telegram", params={"telegram_id": telegram_id})
-    return int(data["user_id"])
+    uid = data.get("user_id") or data.get("id")
+    if uid is None:
+        raise RuntimeError(f"User lookup failed for telegram_id={telegram_id}: {data}")
+    return int(uid)
 
+async def is_group_member(client: httpx.AsyncClient, group_id: int, user_id: int) -> bool:
+    members = await api_get(client, f"/groups/{group_id}/members")
+    items = members.get("members") if isinstance(members, dict) else members
+    if not isinstance(items, list):
+        return False
+    for m in items:
+        if isinstance(m, dict) and _extract_user_id(m) == user_id:
+            return True
+    return False
 
-# ---------- Bot ----------
+async def notify_admin_new_join_request(
+    bot: Bot,
+    client: httpx.AsyncClient,
+    group_id: int,
+    applicant_tg_id: int,
+    applicant_username: str | None = None,
+) -> None:
+    try:
+        # беремо групу з /groups?bot_id=...
+        groups = await api_get(client, "/groups", params={"bot_id": BOT_ID})
+        group = next((g for g in (groups or []) if int(g.get("id", -1)) == group_id), None)
+
+        group_name = group.get("name", "") if isinstance(group, dict) else ""
+
+        # адмін групи (created_by) якщо є, інакше fallback на ADMIN_TG_ID
+        admin_tg = None
+        if isinstance(group, dict) and group.get("created_by"):
+            admin_user = await api_get(client, f"/users/{group['created_by']}")
+            admin_tg = admin_user.get("telegram_id")
+
+        if not admin_tg and ADMIN_TG_ID:
+            admin_tg = ADMIN_TG_ID
+
+        if not admin_tg:
+            return
+
+        uname = f"@{applicant_username}" if applicant_username else str(applicant_tg_id)
+        text = f"🟠 Нова заявка на вступ у групу <b>{group_name}</b>\nКористувач: {uname}"
+        await bot.send_message(int(admin_tg), text)
+
+    except Exception:
+        logging.exception("Failed to notify admin about join request")
+
 async def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN is empty. Set BOT_TOKEN in .env")
@@ -117,22 +251,72 @@ async def main():
     dp = Dispatcher()
     client = httpx.AsyncClient()
 
-    # --- /start ---
+    # ---------- Survey helpers ----------
+    async def show_current_question(message: Message, session_id: int, group_id: int, tg_user_id: int):
+        data = await api_get(client, f"/survey-sessions/{session_id}/current")
+
+        if data.get("finished"):
+            await message.answer("✅ Дякую! Опитування завершено.")
+            return
+
+        q = data["question"]
+        qid = int(q["id"])
+        qtype = (q["type"] or "").strip().lower()
+        text = q["text"]
+
+        if qtype == "single":
+            kb = InlineKeyboardBuilder()
+            for opt in q.get("options", []):
+                kb.button(
+                    text=opt["text"],
+                    callback_data=f"survey_ans:{session_id}:{group_id}:{qid}:{qtype}:{opt['id']}",
+                )
+            kb.adjust(1)
+            await message.answer(text, reply_markup=kb.as_markup())
+            return
+
+        if qtype == "text":
+            user_state[tg_user_id] = {
+                "mode": "survey_text",
+                "session_id": session_id,
+                "group_id": group_id,
+                "question_id": qid,
+            }
+            await message.answer(text + "\n\n✍️ Напиши відповідь одним повідомленням:")
+            return
+
+        await message.answer("Поки підтримуються лише single/text.")
+
+    # ---------- /start ----------
     @dp.message(CommandStart())
     async def start(m: Message):
         await api_post(
             client,
             "/telegram/register",
-            {
-                "bot_id": BOT_ID,
-                "telegram_id": m.from_user.id,
-                "username": m.from_user.username,
-            },
+            {"bot_id": BOT_ID, "telegram_id": m.from_user.id, "username": m.from_user.username},
         )
         is_admin = m.from_user.id == ADMIN_TG_ID
         await m.answer("Готово. Обери дію:", reply_markup=kb_main(is_admin))
 
-    # --- main nav ---
+    # ---------- Surveys: answer single ----------
+    @dp.callback_query(F.data.startswith("survey_ans:"))
+    async def survey_answer(cb: CallbackQuery):
+        await cb.answer()
+        _, session_id, group_id, qid, qtype, opt_id = cb.data.split(":")
+        session_id = int(session_id)
+        group_id = int(group_id)
+        qid = int(qid)
+        opt_id = int(opt_id)
+
+        await api_post(
+            client,
+            f"/survey-sessions/{session_id}/answer",
+            {"question_id": qid, "type": qtype, "option_id": opt_id, "text": None},
+        )
+
+        await show_current_question(cb.message, session_id, group_id, cb.from_user.id)
+
+    # ---------- Main nav ----------
     @dp.callback_query(F.data == "admin_groups")
     async def admin_groups(cb: CallbackQuery):
         if cb.from_user.id != ADMIN_TG_ID:
@@ -155,60 +339,246 @@ async def main():
             is_admin = cb.from_user.id == ADMIN_TG_ID
             await cb.message.edit_text("Груп поки немає.", reply_markup=kb_main(is_admin))
             return
-
         await cb.message.edit_text("Оберіть групу:", reply_markup=kb_groups(groups_list))
 
     @dp.callback_query(F.data.startswith("group:"))
     async def open_group(cb: CallbackQuery):
-        group_id = int(cb.data.split(":")[1])
-        is_admin = cb.from_user.id == ADMIN_TG_ID
-        await cb.message.edit_text(
-            f"Група #{group_id}. Дія:",
-            reply_markup=kb_group_actions(group_id, is_admin),
+        group_id = int(cb.data.split(":", 1)[1])
+        groups_list = await api_get(client, "/groups", params={"bot_id": BOT_ID})
+        group = next((x for x in groups_list if x.get("id") == group_id), None)
+        if not group:
+            await cb.answer("Групу не знайдено", show_alert=True)
+            return
+
+        is_admin = (cb.from_user.id == ADMIN_TG_ID)
+
+        is_member = False
+        join_pending = False
+
+        if not is_admin:
+            user_id = await get_user_id_by_tg(
+                client,
+                cb.from_user.id,
+                cb.from_user.username,
+                cb.from_user.first_name,
+                cb.from_user.last_name,
+            )
+            is_member = await is_group_member(client, group_id, user_id)
+
+            # спроба визначити чи є pending заявка (не критично, якщо бек не підтримує)
+            try:
+                pending_items = await api_get(client, "/join-requests/pending", params={"bot_id": BOT_ID})
+                if isinstance(pending_items, list):
+                    for it in pending_items:
+                        if int(it.get("group_id", -1)) == group_id and int(it.get("user_id", -1)) == user_id:
+                            join_pending = True
+                            break
+            except Exception:
+                pass
+        else:
+            is_member = True
+
+        text = f"Група: {group['name']}\nОберіть дію:"
+        await safe_edit(
+            cb.message,
+            text,
+            reply_markup=kb_group_actions(group_id, is_admin=is_admin, is_member=is_member, join_pending=join_pending),
         )
         await cb.answer()
 
-    # --- join request ---
+    # ---------- Surveys: list ----------
+    @dp.callback_query(F.data.startswith("surveys:"))
+    async def surveys_list(cb: CallbackQuery):
+        await cb.answer()
+        group_id = int(cb.data.split(":", 1)[1])
+        is_admin = (cb.from_user.id == ADMIN_TG_ID)
+
+        # user_id потрібен бекенду (422 без user_id)
+        user_id = await get_user_id_by_tg(
+            client,
+            cb.from_user.id,
+            cb.from_user.username,
+            cb.from_user.first_name,
+            cb.from_user.last_name,
+        )
+
+        if not is_admin:
+            if not await is_group_member(client, group_id, user_id):
+                await safe_edit(
+                    cb.message,
+                    "У вас немає доступу до опитувань цієї групи.\nПодайте заявку на вступ.",
+                    reply_markup=kb_group_actions(group_id, is_admin=False, is_member=False),
+                )
+                return
+
+        data = await api_get(client, f"/groups/{group_id}/surveys", params={"user_id": user_id})
+
+        # бек може повертати або list, або {"surveys":[...]}
+        surveys = data.get("surveys", []) if isinstance(data, dict) else (data or [])
+        if not isinstance(surveys, list):
+            surveys = []
+
+        await safe_edit(
+            cb.message,
+            "Оберіть опитування:",
+            reply_markup=kb_surveys_list(surveys, group_id, is_admin=is_admin),
+        )
+
+    # ---------- Surveys: open (preview) ----------
+    @dp.callback_query(F.data.startswith("survey_open:"))
+    async def survey_open(cb: CallbackQuery):
+        await cb.answer()
+        _, group_id_s, survey_id_s = cb.data.split(":")
+        group_id = int(group_id_s)
+        survey_id = int(survey_id_s)
+
+        is_admin = (cb.from_user.id == ADMIN_TG_ID)
+
+        if not is_admin:
+            user_id = await get_user_id_by_tg(
+                client,
+                cb.from_user.id,
+                cb.from_user.username,
+                cb.from_user.first_name,
+                cb.from_user.last_name,
+            )
+            if not await is_group_member(client, group_id, user_id):
+                await safe_edit(
+                    cb.message,
+                    "У вас немає доступу до цього опитування.\nПодайте заявку на вступ у групу.",
+                    reply_markup=kb_group_actions(group_id, is_admin=False, is_member=False),
+                )
+                return
+
+            status = await api_get(
+                client,
+                "/survey-sessions/status",
+                params={"survey_id": survey_id, "group_id": group_id, "user_id": user_id},
+            )
+            if status.get("completed") is True:
+                info = await api_get(client, f"/surveys/{survey_id}")
+                title = info.get("title", f"Опитування #{survey_id}")
+                await safe_edit(cb.message, f"✅ Ви вже пройшли: <b>{title}</b>", reply_markup=kb_surveys_back(group_id))
+                return
+
+        info = await api_get(client, f"/surveys/{survey_id}")
+        title = info.get("title", f"Опитування #{survey_id}")
+        await safe_edit(
+            cb.message,
+            f"<b>{title}</b>\n\nНатисніть «Почати», щоб розпочати.",
+            reply_markup=kb_survey_start(group_id, survey_id),
+        )
+
+    # ---------- Surveys: start session ----------
+    @dp.callback_query(F.data.startswith("survey_start:"))
+    async def survey_start(cb: CallbackQuery):
+        await cb.answer()
+        _, group_id_s, survey_id_s = cb.data.split(":")
+        group_id = int(group_id_s)
+        survey_id = int(survey_id_s)
+
+        user_id = await get_user_id_by_tg(
+            client,
+            cb.from_user.id,
+            cb.from_user.username,
+            cb.from_user.first_name,
+            cb.from_user.last_name,
+        )
+
+        resp = await api_post(
+            client,
+            "/survey-sessions/start",
+            {"survey_id": survey_id, "group_id": group_id, "user_id": user_id},
+        )
+        session_id = int(resp["session_id"])
+        await show_current_question(cb.message, session_id, group_id, cb.from_user.id)
+
+    # ---------- Surveys: admin create wizard ----------
+    @dp.callback_query(F.data.startswith("survey_create:"))
+    async def survey_create_start(cb: CallbackQuery):
+        if cb.from_user.id != ADMIN_TG_ID:
+            await cb.answer("Нема доступу", show_alert=True)
+            return
+        await cb.answer()
+        group_id = int(cb.data.split(":")[1])
+        admin_state[cb.from_user.id] = {"mode": "survey_create_title", "group_id": group_id}
+        await cb.message.answer("Введіть *назву* опитування (1 повідомленням):")
+
+    # ---------- Join request ----------
     @dp.callback_query(F.data.startswith("join:"))
     async def join(cb: CallbackQuery):
         await cb.answer()
-        group_id = int(cb.data.split(":")[1])
+        group_id = int(cb.data.split(":", 1)[1])
 
         try:
-            user_id = await get_user_id_by_tg(client, cb.from_user.id)
-            jr = await api_post(client, "/join-requests", {"user_id": user_id, "group_id": group_id})
-            req_id = jr["id"]
+            user_id = await get_user_id_by_tg(
+                client,
+                cb.from_user.id,
+                cb.from_user.username,
+                cb.from_user.first_name,
+                cb.from_user.last_name,
+            )
 
-            await cb.message.answer("Заявку відправлено адміну ✅")
+            if await is_group_member(client, group_id, user_id):
+                await safe_edit(
+                    cb.message,
+                    "Ви вже є учасником цієї групи ✅",
+                    reply_markup=kb_group_actions(group_id, is_admin=False, is_member=True),
+                )
+                return
 
-            # notify admin
-            if ADMIN_TG_ID:
-                username = cb.from_user.username or "(no username)"
+            # створюємо заявку
+            jr = await api_post(client, "/join-requests", {"group_id": group_id, "user_id": user_id})
+            req_id = jr.get("id")
+
+            await safe_edit(
+                cb.message,
+                "✅ Заявку на вступ відправлено. Очікуйте підтвердження.",
+                reply_markup=kb_group_actions(group_id, is_admin=False, is_member=False, join_pending=True),
+            )
+
+            # 1) Спроба на адміна групи (created_by)
+            try:
+                await notify_admin_new_join_request(
+                    bot,
+                    client,
+                    group_id=group_id,
+                    applicant_tg_id=cb.from_user.id,
+                    applicant_username=cb.from_user.username,
+                )
+            except Exception:
+                pass
+
+            # 2) Fallback / гарантія: шлемо в ADMIN_TG_ID з кнопками approve/reject
+            if ADMIN_TG_ID and req_id:
+                uname = f"@{cb.from_user.username}" if cb.from_user.username else str(cb.from_user.id)
                 text = (
-                    "🆕 Запит на вступ\n"
-                    f"User: @{username} (tg_id={cb.from_user.id})\n"
-                    f"Group ID: {group_id}\n"
+                    f"🆕 Pending заявка\n"
+                    f"Група ID: {group_id}\n"
+                    f"Користувач: {uname}\n"
                     f"Request ID: {req_id}"
                 )
-                await bot.send_message(ADMIN_TG_ID, text, reply_markup=kb_admin_request(req_id))
+                try:
+                    await bot.send_message(ADMIN_TG_ID, text, reply_markup=kb_admin_request(int(req_id)))
+                except Exception:
+                    logging.exception("Failed to notify ADMIN_TG_ID about join request")
+
 
         except httpx.HTTPStatusError as e:
-            try:
-                detail = e.response.json().get("detail", "")
-            except Exception:
-                detail = e.response.text
-
-            if "Already a member" in detail:
-                await cb.message.answer("Ви вже в цій групі ✅")
-            elif "Request already pending" in detail:
-                await cb.message.answer("Заявка вже на розгляді ⏳")
+            if e.response is not None and e.response.status_code in (400, 409):
+                await safe_edit(
+                    cb.message,
+                    "⏳ Заявка вже існує або ви вже в групі.",
+                    reply_markup=kb_group_actions(group_id, is_admin=False, is_member=False, join_pending=True),
+                )
             else:
-                await cb.message.answer("Не вдалося відправити заявку. Спробуйте пізніше.")
-        except Exception as e:
-            logging.exception("join handler error: %s", e)
+                logging.exception("join handler error")
+                await cb.message.answer("Помилка. Спробуйте пізніше.")
+        except Exception:
+            logging.exception("join handler error")
             await cb.message.answer("Помилка. Спробуйте пізніше.")
 
-    # --- members (admin) ---
+    # ---------- Members (admin) ----------
     @dp.callback_query(F.data.startswith("members:"))
     async def members(cb: CallbackQuery):
         if cb.from_user.id != ADMIN_TG_ID:
@@ -221,17 +591,18 @@ async def main():
         try:
             members_list = await api_get(client, f"/groups/{group_id}/members")
 
-            if not members_list:
+            items = members_list.get("members") if isinstance(members_list, dict) else members_list
+            if not items:
                 await cb.message.answer("У групі ще немає учасників.")
                 return
 
             kb = InlineKeyboardBuilder()
             lines: list[str] = []
 
-            for m in members_list[:20]:
-                uname = f"@{m.get('username')}" if m.get("username") else f"tg:{m['telegram_id']}"
+            for m in items[:20]:
+                uname = f"@{m.get('username')}" if isinstance(m, dict) and m.get("username") else f"tg:{m.get('telegram_id')}"
                 lines.append(f"• {uname}")
-                kb.button(text=f"❌ {uname}", callback_data=f"kick:{group_id}:{m['user_id']}")
+                kb.button(text=f"❌ {uname}", callback_data=f"kick:{group_id}:{m.get('user_id')}")
 
             kb.adjust(1)
 
@@ -244,7 +615,7 @@ async def main():
             logging.exception("members handler error: %s", e)
             await cb.message.answer("Помилка: не вдалося отримати список учасників.")
 
-    # --- kick (admin) ---
+    # ---------- Kick (admin) ----------
     @dp.callback_query(F.data.startswith("kick:"))
     async def kick(cb: CallbackQuery):
         if cb.from_user.id != ADMIN_TG_ID:
@@ -259,11 +630,10 @@ async def main():
         try:
             r = await client.delete(f"{API_BASE_URL}/groups/{group_id}/members/{user_id}", timeout=20)
             r.raise_for_status()
-            resp = r.json()  # {"ok": true, "user_telegram_id": ..., "group_name": ...}
+            resp = r.json()
 
             await cb.message.answer("✅ Учасника видалено.")
 
-            # повідомлення користувачу
             try:
                 await bot.send_message(
                     resp["user_telegram_id"],
@@ -276,7 +646,7 @@ async def main():
             logging.exception("kick error: %s", e)
             await cb.message.answer("Помилка видалення.")
 
-    # --- approve/reject (admin) ---
+    # ---------- Approve/Reject (admin) ----------
     @dp.callback_query(F.data.startswith("approve:"))
     async def approve(cb: CallbackQuery):
         if cb.from_user.id != ADMIN_TG_ID:
@@ -301,7 +671,6 @@ async def main():
                     pass
                 return
 
-            # notify user
             try:
                 await bot.send_message(
                     resp["user_telegram_id"],
@@ -310,7 +679,6 @@ async def main():
             except Exception:
                 pass
 
-            # close buttons + update text
             try:
                 await cb.message.edit_reply_markup(reply_markup=None)
             except Exception:
@@ -348,7 +716,6 @@ async def main():
                     pass
                 return
 
-            # notify user
             try:
                 await bot.send_message(
                     resp["user_telegram_id"],
@@ -357,7 +724,6 @@ async def main():
             except Exception:
                 pass
 
-            # close buttons + update text
             try:
                 await cb.message.edit_reply_markup(reply_markup=None)
             except Exception:
@@ -371,7 +737,7 @@ async def main():
             logging.exception("reject error: %s", e)
             await cb.message.answer("Помилка reject.")
 
-    # --- pending list (admin) ---
+    # ---------- Pending list (admin) ----------
     @dp.callback_query(F.data == "pending")
     async def pending(cb: CallbackQuery):
         if cb.from_user.id != ADMIN_TG_ID:
@@ -394,7 +760,7 @@ async def main():
             )
             await cb.message.answer(text, reply_markup=kb_admin_request(it["id"]))
 
-    # --- admin: create group ---
+    # ---------- Admin: create group ----------
     @dp.callback_query(F.data == "group_create")
     async def group_create(cb: CallbackQuery):
         if cb.from_user.id != ADMIN_TG_ID:
@@ -405,7 +771,7 @@ async def main():
         await cb.message.answer("Введіть назву нової групи (одним повідомленням):")
         await cb.answer()
 
-    # --- admin: rename group flow ---
+    # ---------- Admin: rename group ----------
     @dp.callback_query(F.data == "group_rename_pick")
     async def group_rename_pick(cb: CallbackQuery):
         if cb.from_user.id != ADMIN_TG_ID:
@@ -435,7 +801,7 @@ async def main():
         admin_state[cb.from_user.id] = {"mode": "rename_group", "group_id": group_id}
         await cb.message.answer(f"Введіть нову назву для групи id={group_id}:")
 
-    # --- admin: delete group flow ---
+    # ---------- Admin: delete group ----------
     @dp.callback_query(F.data == "group_delete_pick")
     async def group_delete_pick(cb: CallbackQuery):
         if cb.from_user.id != ADMIN_TG_ID:
@@ -484,9 +850,33 @@ async def main():
             logging.exception("delete_group_confirm error: %s", e)
             await cb.message.answer("❌ Помилка видалення групи.")
 
-    # --- admin text input handler (create/rename) ---
+    # ---------- Message handler ----------
     @dp.message()
-    async def admin_text_handler(m: Message):
+    async def message_handler(m: Message):
+        # 1) USER: survey text answer (працює для всіх)
+        st_user = user_state.get(m.from_user.id)
+        if st_user and st_user.get("mode") == "survey_text":
+            session_id = int(st_user["session_id"])
+            group_id = int(st_user["group_id"])
+            qid = int(st_user["question_id"])
+
+            try:
+                await api_post(
+                    client,
+                    f"/survey-sessions/{session_id}/answer",
+                    {"question_id": qid, "type": "text", "text": (m.text or "").strip()},
+                )
+            except Exception:
+                logging.exception("Failed to submit text answer")
+                await m.answer("❌ Не вдалося зберегти відповідь. Спробуйте ще раз.")
+                return
+
+
+            user_state.pop(m.from_user.id, None)
+            await show_current_question(m, session_id, group_id, m.from_user.id)
+            return
+
+        # 2) якщо НЕ адмін — більше нічого не обробляємо
         if m.from_user.id != ADMIN_TG_ID:
             return
 
@@ -496,7 +886,7 @@ async def main():
 
         text = (m.text or "").strip()
         if not text:
-            await m.answer("Порожня назва. Спробуйте ще раз.")
+            await m.answer("Порожнє повідомлення. Спробуйте ще раз.")
             return
 
         mode = st.get("mode")
@@ -505,11 +895,7 @@ async def main():
         if mode == "create_group":
             try:
                 admin_user_id = await get_user_id_by_tg(client, m.from_user.id)
-                g = await api_post(
-                    client,
-                    "/groups",
-                    {"bot_id": BOT_ID, "name": text, "created_by": admin_user_id},
-                )
+                g = await api_post(client, "/groups", {"bot_id": BOT_ID, "name": text, "created_by": admin_user_id})
                 await m.answer(f"✅ Групу створено: {g['name']} (id={g['id']})")
             except Exception as e:
                 logging.exception("create group error: %s", e)
@@ -531,6 +917,92 @@ async def main():
                 admin_state.pop(m.from_user.id, None)
             return
 
+        # --- survey create: title ---
+        if mode == "survey_create_title":
+            group_id = int(st["group_id"])
+            try:
+                admin_user_id = await get_user_id_by_tg(client, m.from_user.id)
+
+                survey = await api_post(
+                    client,
+                    "/surveys",
+                    {"bot_id": BOT_ID, "title": text, "description": None, "created_by": admin_user_id},
+                )
+                survey_id = int(survey["id"])
+
+                # attach to group
+                await api_post(client, f"/groups/{group_id}/surveys/{survey_id}", {})
+
+                admin_state[m.from_user.id] = {
+                    "mode": "survey_add_question_type",
+                    "group_id": group_id,
+                    "survey_id": survey_id,
+                }
+
+                await m.answer(
+                    "✅ Опитування створено і прив’язано до групи.\n\n"
+                    "Додамо питання.\n"
+                    "Напишіть тип: single або text\n"
+                    "Або напишіть: done (щоб завершити)"
+                )
+            except Exception as e:
+                logging.exception("survey_create_title error: %s", e)
+                await m.answer("❌ Помилка створення опитування.")
+                admin_state.pop(m.from_user.id, None)
+            return
+
+        # --- survey create: choose question type ---
+        if mode == "survey_add_question_type":
+            if text.lower() == "done":
+                admin_state.pop(m.from_user.id, None)
+                await m.answer("✅ Готово. Опитування доступне в групі.")
+                return
+
+            qtype = text.lower().strip()
+            if qtype not in ("single", "text"):
+                await m.answer("Напишіть тільки: single або text (або done)")
+                return
+
+            admin_state[m.from_user.id] = {**st, "mode": "survey_add_question_text", "qtype": qtype}
+            await m.answer("Введіть текст питання (1 повідомленням):")
+            return
+
+        # --- survey create: question text ---
+        if mode == "survey_add_question_text":
+            survey_id = int(st["survey_id"])
+            group_id = int(st["group_id"])
+            qtype = st["qtype"]
+            qtext = text
+
+            if qtype == "text":
+                await api_post(client, f"/surveys/{survey_id}/questions", {"type": "text", "text": qtext, "options": None})
+                admin_state[m.from_user.id] = {"mode": "survey_add_question_type", "group_id": group_id, "survey_id": survey_id}
+                await m.answer("✅ Питання додано.\n\nДодати ще? single / text або done")
+                return
+
+            admin_state[m.from_user.id] = {**st, "mode": "survey_add_question_options", "qtext": qtext}
+            await m.answer("Введіть варіанти відповіді — *кожен з нового рядка* (мінімум 2):")
+            return
+
+        # --- survey create: question options (single) ---
+        if mode == "survey_add_question_options":
+            survey_id = int(st["survey_id"])
+            group_id = int(st["group_id"])
+            qtext = st["qtext"]
+
+            options = [line.strip() for line in (m.text or "").splitlines() if line.strip()]
+            if len(options) < 2:
+                await m.answer("Потрібно мінімум 2 варіанти. Спробуйте ще раз.")
+                return
+
+            await api_post(client, f"/surveys/{survey_id}/questions", {"type": "single", "text": qtext, "options": options})
+            admin_state[m.from_user.id] = {"mode": "survey_add_question_type", "group_id": group_id, "survey_id": survey_id}
+            await m.answer("✅ Питання додано.\n\nДодати ще? single / text або done")
+            return
+
+        admin_state.pop(m.from_user.id, None)
+        await m.answer("Стан скинуто. Спробуйте ще раз.")
+
     try:
         await dp.start_polling(bot)
     finally:
@@ -539,7 +1011,6 @@ async def main():
             await bot.session.close()
         except Exception:
             pass
-
 
 if __name__ == "__main__":
     asyncio.run(main())

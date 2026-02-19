@@ -4,6 +4,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from app.db.models import Group, GroupMember, User, JoinRequest
 from app.db.session import get_session
+from app.db import models
+
 
 router = APIRouter(prefix="/groups", tags=["groups"])
 
@@ -108,3 +110,72 @@ async def delete_group(group_id: int, session: AsyncSession = Depends(get_sessio
     await session.commit()
 
     return {"ok": True, "deleted_group_id": group_id}
+@router.get("/{group_id}/surveys")
+async def list_group_surveys(group_id: int, user_id: int, session: AsyncSession = Depends(get_session)):
+    g = await session.execute(select(models.Group).where(models.Group.id == group_id))
+    group = g.scalar_one_or_none()
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+
+    # ✅ доступ тільки членам групи або creator
+    is_member = await session.execute(
+        select(models.GroupMember.id).where(
+            models.GroupMember.group_id == group_id,
+            models.GroupMember.user_id == user_id,
+        )
+    )
+    if not is_member.scalar_one_or_none() and group.created_by != user_id:
+        raise HTTPException(status_code=403, detail="Not a member of this group")
+
+    rows = await session.execute(
+        select(models.Survey.id, models.Survey.title, models.Survey.description)
+        .join(models.GroupSurvey, models.GroupSurvey.survey_id == models.Survey.id)
+        .where(models.GroupSurvey.group_id == group_id)
+        .order_by(models.Survey.id.desc())
+    )
+    data = rows.all()
+
+    return {
+        "group_id": group_id,
+        "surveys": [{"id": r.id, "title": r.title, "description": r.description} for r in data],
+    }
+
+@router.post("/{group_id}/surveys/{survey_id}")
+async def attach_survey(group_id: int, survey_id: int, session: AsyncSession = Depends(get_session)):
+    g = await session.execute(select(models.Group).where(models.Group.id == group_id))
+    if not g.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Group not found")
+
+    s = await session.execute(select(models.Survey).where(models.Survey.id == survey_id))
+    if not s.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Survey not found")
+
+    exists = await session.execute(
+        select(models.GroupSurvey.id).where(
+            models.GroupSurvey.group_id == group_id,
+            models.GroupSurvey.survey_id == survey_id
+        )
+    )
+    if exists.scalar_one_or_none():
+        return {"ok": True, "already": True}
+
+    session.add(models.GroupSurvey(group_id=group_id, survey_id=survey_id))
+    await session.commit()
+    return {"ok": True}
+
+
+@router.delete("/{group_id}/surveys/{survey_id}")
+async def detach_survey(group_id: int, survey_id: int, session: AsyncSession = Depends(get_session)):
+    res = await session.execute(
+        select(models.GroupSurvey).where(
+            models.GroupSurvey.group_id == group_id,
+            models.GroupSurvey.survey_id == survey_id
+        )
+    )
+    link = res.scalar_one_or_none()
+    if not link:
+        raise HTTPException(status_code=404, detail="Not attached")
+
+    await session.delete(link)
+    await session.commit()
+    return {"ok": True}
