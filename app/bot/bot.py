@@ -21,8 +21,13 @@ ADMIN_TG_ID = int(os.getenv("ADMIN_TG_ID", "0"))
 admin_state: dict[int, dict] = {}
 # user_state: тільки для проходження опитувань (text answers)
 user_state: dict[int, dict] = {}
+join_req_cache: dict[int, dict] = {}
+admin_req_message_id: dict[int, int] = {}
 
-# ---------- Utils ----------
+# ======================================================================================
+# Utils / helpers (вище main) — одна логіка, один стиль повідомлень
+# ======================================================================================
+
 async def safe_edit(message: Message, text: str, reply_markup=None):
     """Edit message if possible; ignore 'message is not modified' and fall back to sending a new one."""
     try:
@@ -168,23 +173,20 @@ async def get_user_id_by_tg(
     first_name: str | None = None,
     last_name: str | None = None,
 ) -> int:
-    """Return internal user_id for given telegram_id.
-
-    API may respond with {"user_id": ...} (preferred) or {"id": ...} (legacy).
-    If user is not found, it registers the user via /telegram/register and retries.
-    """
-    # 1) try fetch
+    # 1) отримати user_id
+    uid: int | None = None
     try:
         data = await api_get(client, "/users/by-telegram", params={"telegram_id": telegram_id})
+        logging.info("BY_TELEGRAM RESPONSE: %s", data)
         uid = data.get("user_id") or data.get("id")
         if uid is not None:
-            return int(uid)
+            uid = int(uid)
     except httpx.HTTPStatusError as e:
         if e.response is None or e.response.status_code != 404:
             raise
 
-    # 2) register, then refetch
-    payload = {"telegram_id": telegram_id}
+    # 2) UPSERT telegram профілю (ВАЖЛИВО: робимо завжди, не тільки при 404)
+    payload = {"telegram_id": telegram_id, "bot_id": BOT_ID}
     if username:
         payload["username"] = username
     if first_name:
@@ -192,14 +194,21 @@ async def get_user_id_by_tg(
     if last_name:
         payload["last_name"] = last_name
 
-    await api_post(client, "/telegram/register", json=payload)
+    try:
+        await api_post(client, "/telegram/register", json=payload)
+    except Exception:
+        # навіть якщо апдейт не пройшов — user_id нам все одно потрібен
+        pass
 
-    data = await api_get(client, "/users/by-telegram", params={"telegram_id": telegram_id})
-    uid = data.get("user_id") or data.get("id")
+    # 3) якщо uid не було — беремо ще раз після register
     if uid is None:
-        raise RuntimeError(f"User lookup failed for telegram_id={telegram_id}: {data}")
-    return int(uid)
+        data = await api_get(client, "/users/by-telegram", params={"telegram_id": telegram_id})
+        uid = data.get("user_id") or data.get("id")
+        if uid is None:
+            raise RuntimeError(f"User lookup failed for telegram_id={telegram_id}: {data}")
+        uid = int(uid)
 
+    return uid
 async def is_group_member(client: httpx.AsyncClient, group_id: int, user_id: int) -> bool:
     members = await api_get(client, f"/groups/{group_id}/members")
     items = members.get("members") if isinstance(members, dict) else members
@@ -210,38 +219,100 @@ async def is_group_member(client: httpx.AsyncClient, group_id: int, user_id: int
             return True
     return False
 
-async def notify_admin_new_join_request(
+async def resolve_group_name(client: httpx.AsyncClient, group_id: int) -> str:
+    try:
+        groups = await api_get(client, "/groups", params={"bot_id": BOT_ID})
+        g = next((x for x in (groups or []) if int(x.get("id", -1)) == int(group_id)), None)
+        if isinstance(g, dict) and g.get("name"):
+            return str(g["name"])
+    except Exception:
+        pass
+    return f"id={group_id}"
+
+async def resolve_user_display(client: httpx.AsyncClient, user_id: int) -> tuple[str, int | None]:
+    uname = f"user_id:{user_id}"
+    tg_id = None
+
+    try:
+        u = await api_get(client, f"/users/{user_id}")  # <- тут зараз 404
+        logging.info("USER %s RESPONSE: %s", user_id, u)
+
+        if isinstance(u, dict) and isinstance(u.get("user"), dict):
+            u = u["user"]
+
+        tg_id = u.get("telegram_id")
+        username = u.get("username") or u.get("tg_username")
+
+        if username:
+            uname = f"@{username}"
+        elif tg_id:
+            uname = f"tg:{tg_id}"
+
+    except httpx.HTTPStatusError as e:
+        if e.response is not None and e.response.status_code == 404:
+            # просто залишаємо fallback user_id:...
+            logging.warning("User %s not found via /users/{id}", user_id)
+        else:
+            logging.exception("resolve_user_display failed for user_id=%s", user_id)
+    except Exception:
+        logging.exception("resolve_user_display failed for user_id=%s", user_id)
+
+    return uname, tg_id
+
+async def build_join_request_message(
+    client: httpx.AsyncClient,
+    req_id: int,
+    group_id: int,
+    user_id: int,
+    tg_username: str | None = None,
+    tg_id_override: int | None = None,
+) -> str:
+    group_name = await resolve_group_name(client, group_id)
+
+    # якщо ми вже знаємо username з Telegram — використовуємо його
+    if tg_username:
+        uname = f"@{tg_username}"
+        tg_id = tg_id_override
+    else:
+        uname, tg_id = await resolve_user_display(client, user_id)
+
+    text = (
+        "🕓 Pending заявка\n"
+        f"Request ID: {req_id}\n"
+        f"Група: {group_name} (id={group_id})\n"
+        f"Користувач: {uname}"
+    )
+    if tg_id:
+        text += f"\nTelegram ID: {tg_id}"
+    return text
+
+async def send_admin_join_request(
     bot: Bot,
     client: httpx.AsyncClient,
+    req_id: int,
     group_id: int,
-    applicant_tg_id: int,
-    applicant_username: str | None = None,
+    user_id: int,
+    tg_username: str | None = None,
+    tg_id_override: int | None = None,
 ) -> None:
-    try:
-        # беремо групу з /groups?bot_id=...
-        groups = await api_get(client, "/groups", params={"bot_id": BOT_ID})
-        group = next((g for g in (groups or []) if int(g.get("id", -1)) == group_id), None)
+    if not ADMIN_TG_ID:
+        return
 
-        group_name = group.get("name", "") if isinstance(group, dict) else ""
+    text = await build_join_request_message(
+        client, req_id, group_id, user_id,
+        tg_username=tg_username,
+        tg_id_override=tg_id_override,
+    )
 
-        # адмін групи (created_by) якщо є, інакше fallback на ADMIN_TG_ID
-        admin_tg = None
-        if isinstance(group, dict) and group.get("created_by"):
-            admin_user = await api_get(client, f"/users/{group['created_by']}")
-            admin_tg = admin_user.get("telegram_id")
+    msg = await bot.send_message(int(ADMIN_TG_ID), text, reply_markup=kb_admin_request(int(req_id)))
 
-        if not admin_tg and ADMIN_TG_ID:
-            admin_tg = ADMIN_TG_ID
+    # кешуємо, щоб pending міг показати те саме і щоб не дублювати
+    join_req_cache[int(req_id)] = {"username": tg_username, "telegram_id": tg_id_override}
+    admin_req_message_id[int(req_id)] = msg.message_id
 
-        if not admin_tg:
-            return
-
-        uname = f"@{applicant_username}" if applicant_username else str(applicant_tg_id)
-        text = f"🟠 Нова заявка на вступ у групу <b>{group_name}</b>\nКористувач: {uname}"
-        await bot.send_message(int(admin_tg), text)
-
-    except Exception:
-        logging.exception("Failed to notify admin about join request")
+# ======================================================================================
+# main
+# ======================================================================================
 
 async def main():
     if not BOT_TOKEN:
@@ -251,7 +322,7 @@ async def main():
     dp = Dispatcher()
     client = httpx.AsyncClient()
 
-    # ---------- Survey helpers ----------
+    # ---------- Survey helpers (локальні для main, бо використовують client) ----------
     async def show_current_question(message: Message, session_id: int, group_id: int, tg_user_id: int):
         data = await api_get(client, f"/survey-sessions/{session_id}/current")
 
@@ -287,6 +358,9 @@ async def main():
 
         await message.answer("Поки підтримуються лише single/text.")
 
+    @dp.callback_query(F.data == "noop")
+    async def noop(cb: CallbackQuery):
+        await cb.answer("⏳ Заявка вже на розгляді", show_alert=False)
     # ---------- /start ----------
     @dp.message(CommandStart())
     async def start(m: Message):
@@ -393,7 +467,6 @@ async def main():
         group_id = int(cb.data.split(":", 1)[1])
         is_admin = (cb.from_user.id == ADMIN_TG_ID)
 
-        # user_id потрібен бекенду (422 без user_id)
         user_id = await get_user_id_by_tg(
             client,
             cb.from_user.id,
@@ -412,8 +485,6 @@ async def main():
                 return
 
         data = await api_get(client, f"/groups/{group_id}/surveys", params={"user_id": user_id})
-
-        # бек може повертати або list, або {"surveys":[...]}
         surveys = data.get("surveys", []) if isinstance(data, dict) else (data or [])
         if not isinstance(surveys, list):
             surveys = []
@@ -458,14 +529,14 @@ async def main():
             if status.get("completed") is True:
                 info = await api_get(client, f"/surveys/{survey_id}")
                 title = info.get("title", f"Опитування #{survey_id}")
-                await safe_edit(cb.message, f"✅ Ви вже пройшли: <b>{title}</b>", reply_markup=kb_surveys_back(group_id))
+                await safe_edit(cb.message, f"✅ Ви вже пройшли: {title}", reply_markup=kb_surveys_back(group_id))
                 return
 
         info = await api_get(client, f"/surveys/{survey_id}")
         title = info.get("title", f"Опитування #{survey_id}")
         await safe_edit(
             cb.message,
-            f"<b>{title}</b>\n\nНатисніть «Почати», щоб розпочати.",
+            f"{title}\n\nНатисніть «Почати», щоб розпочати.",
             reply_markup=kb_survey_start(group_id, survey_id),
         )
 
@@ -527,7 +598,6 @@ async def main():
                 )
                 return
 
-            # створюємо заявку
             jr = await api_post(client, "/join-requests", {"group_id": group_id, "user_id": user_id})
             req_id = jr.get("id")
 
@@ -537,32 +607,16 @@ async def main():
                 reply_markup=kb_group_actions(group_id, is_admin=False, is_member=False, join_pending=True),
             )
 
-            # 1) Спроба на адміна групи (created_by)
-            try:
-                await notify_admin_new_join_request(
-                    bot,
-                    client,
-                    group_id=group_id,
-                    applicant_tg_id=cb.from_user.id,
-                    applicant_username=cb.from_user.username,
-                )
-            except Exception:
-                pass
-
-            # 2) Fallback / гарантія: шлемо в ADMIN_TG_ID з кнопками approve/reject
-            if ADMIN_TG_ID and req_id:
-                uname = f"@{cb.from_user.username}" if cb.from_user.username else str(cb.from_user.id)
-                text = (
-                    f"🆕 Pending заявка\n"
-                    f"Група ID: {group_id}\n"
-                    f"Користувач: {uname}\n"
-                    f"Request ID: {req_id}"
-                )
+            # ЄДИНЕ повідомлення адміну (в одному форматі, як pending list)
+            if req_id:
                 try:
-                    await bot.send_message(ADMIN_TG_ID, text, reply_markup=kb_admin_request(int(req_id)))
+                    await send_admin_join_request(
+                        bot, client, int(req_id), group_id, user_id,
+                        tg_username=cb.from_user.username,
+                        tg_id_override=cb.from_user.id,
+                    )
                 except Exception:
-                    logging.exception("Failed to notify ADMIN_TG_ID about join request")
-
+                    logging.exception("Failed to notify admin about join request")
 
         except httpx.HTTPStatusError as e:
             if e.response is not None and e.response.status_code in (400, 409):
@@ -590,8 +644,8 @@ async def main():
 
         try:
             members_list = await api_get(client, f"/groups/{group_id}/members")
-
             items = members_list.get("members") if isinstance(members_list, dict) else members_list
+
             if not items:
                 await cb.message.answer("У групі ще немає учасників.")
                 return
@@ -600,12 +654,15 @@ async def main():
             lines: list[str] = []
 
             for m in items[:20]:
-                uname = f"@{m.get('username')}" if isinstance(m, dict) and m.get("username") else f"tg:{m.get('telegram_id')}"
+                uname = (
+                    f"@{m.get('username')}"
+                    if isinstance(m, dict) and m.get("username")
+                    else f"tg:{m.get('telegram_id')}"
+                )
                 lines.append(f"• {uname}")
                 kb.button(text=f"❌ {uname}", callback_data=f"kick:{group_id}:{m.get('user_id')}")
 
             kb.adjust(1)
-
             await cb.message.answer(
                 "👥 Учасники (натисни щоб видалити):\n\n" + "\n".join(lines),
                 reply_markup=kb.as_markup(),
@@ -745,20 +802,60 @@ async def main():
             return
 
         await cb.answer()
-        items = await api_get(client, "/join-requests/pending", params={"bot_id": BOT_ID})
+        items_raw = await api_get(client, "/join-requests/pending", params={"bot_id": BOT_ID})
+
+        if isinstance(items_raw, dict):
+            items = items_raw.get("items") or items_raw.get("pending") or items_raw.get("requests") or []
+        else:
+            items = items_raw or []
 
         if not items:
             await cb.message.answer("Немає pending заявок.")
             return
 
-        for it in items[:20]:
-            text = (
-                "🕓 Pending заявка\n"
-                f"Request ID: {it['id']}\n"
-                f"User ID: {it['user_id']}\n"
-                f"Group: {it['group_name']} (id={it['group_id']})"
+        for it in items[:50]:
+            if not isinstance(it, dict):
+                continue
+
+            try:
+                req_id = int(it.get("id"))
+                user_id = int(it.get("user_id") or it.get("applicant_id") or it.get("user"))
+                group_id = int(it.get("group_id") or it.get("group"))
+            except Exception:
+                continue
+            tg_username = it.get("username") or it.get("tg_username")
+            tg_id = it.get("telegram_id") or it.get("tg_id")
+            if isinstance(tg_id, str) and tg_id.isdigit():
+                tg_id = int(tg_id)
+
+            # потім кеш використовуй як fallback:
+            cached = join_req_cache.get(req_id) or {}
+            cached_username = tg_username or cached.get("username")
+            cached_tg_id = tg_id or cached.get("telegram_id")
+
+            text = await build_join_request_message(
+                client, req_id, group_id, user_id,
+                tg_username=cached_username,
+                tg_id_override=cached_tg_id,
             )
-            await cb.message.answer(text, reply_markup=kb_admin_request(it["id"]))
+
+            # якщо повідомлення вже було відправлене — оновлюємо його, а не дублюємо
+            mid = admin_req_message_id.get(req_id)
+            if mid:
+                try:
+                    await cb.bot.edit_message_text(
+                        chat_id=ADMIN_TG_ID,
+                        message_id=mid,
+                        text=text,
+                        reply_markup=kb_admin_request(req_id),
+                    )
+                    continue
+                except Exception:
+                    # якщо не вдалось відредагувати (наприклад, видалили) — відправимо нове
+                    pass
+
+            msg = await cb.message.answer(text, reply_markup=kb_admin_request(req_id))
+            admin_req_message_id[req_id] = msg.message_id
 
     # ---------- Admin: create group ----------
     @dp.callback_query(F.data == "group_create")
@@ -871,7 +968,6 @@ async def main():
                 await m.answer("❌ Не вдалося зберегти відповідь. Спробуйте ще раз.")
                 return
 
-
             user_state.pop(m.from_user.id, None)
             await show_current_question(m, session_id, group_id, m.from_user.id)
             return
@@ -922,7 +1018,6 @@ async def main():
             group_id = int(st["group_id"])
             try:
                 admin_user_id = await get_user_id_by_tg(client, m.from_user.id)
-
                 survey = await api_post(
                     client,
                     "/surveys",
