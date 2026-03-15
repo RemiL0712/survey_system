@@ -1,29 +1,43 @@
+import os
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
-from app.db.models import User, BotUser
+from app.db.models import Bot, BotUser, User
 
 router = APIRouter(prefix="/telegram", tags=["telegram"])
+
 
 class RegisterIn(BaseModel):
     bot_id: int
     telegram_id: int
     username: str | None = None
 
+
 @router.post("/register")
 async def register(data: RegisterIn, session: AsyncSession = Depends(get_session)):
-    # user
+    bot_result = await session.execute(select(Bot).where(Bot.id == data.bot_id))
+    bot = bot_result.scalar_one_or_none()
+    if not bot:
+        bot = Bot(
+            id=data.bot_id,
+            name=os.getenv("BOT_NAME", "Survey Bot"),
+            token=os.getenv("BOT_TOKEN", ""),
+            is_active=True,
+        )
+        session.add(bot)
+        await session.flush()
+
     res = await session.execute(select(User).where(User.telegram_id == data.telegram_id))
     user = res.scalar_one_or_none()
     if not user:
         user = User(telegram_id=data.telegram_id, username=data.username)
         session.add(user)
-        await session.flush()  # отримати user.id
+        await session.flush()
 
-    # bot_users
     res = await session.execute(
         select(BotUser).where(BotUser.bot_id == data.bot_id, BotUser.user_id == user.id)
     )
