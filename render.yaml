@@ -63,12 +63,13 @@ services:
       - key: ADMIN_TG_IDS
         sync: false
 
+  - type: keyvalue
+    name: survey-system-redis
+    plan: free
+    ipAllowList: []
+
 databases:
   - name: survey-system-db
     databaseName: survey_db
     user: survey_user
     plan: basic-256mb
-
-  - name: survey-system-redis
-    type: keyvalue
-    plan: free
