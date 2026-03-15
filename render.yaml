@@ -6,7 +6,6 @@ services:
     dockerCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers
     plan: free
     healthCheckPath: /health
-    preDeployCommand: alembic upgrade head
     envVars:
       - key: BOT_ID
         value: "1"
