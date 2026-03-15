@@ -1,0 +1,1867 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Survey Admin</title>
+  <style>
+    :root {
+      --bg: #f3efe7;
+      --bg-soft: #faf7f2;
+      --surface: rgba(255, 252, 247, 0.92);
+      --surface-strong: #fffdfa;
+      --line: rgba(61, 46, 28, 0.12);
+      --line-strong: rgba(61, 46, 28, 0.2);
+      --ink: #241f19;
+      --muted: #6e665c;
+      --accent: #0d7c66;
+      --accent-2: #e39a56;
+      --danger: #b44435;
+      --danger-soft: #f7e4e1;
+      --success-soft: #e3f5ef;
+      --shadow: 0 22px 48px rgba(73, 47, 16, 0.12);
+      --radius-xl: 28px;
+      --radius-lg: 20px;
+      --radius-md: 14px;
+      --radius-sm: 10px;
+    }
+
+    :root[data-theme="dark"] {
+      --bg: #121518;
+      --bg-soft: #171c20;
+      --surface: rgba(24, 29, 34, 0.92);
+      --surface-strong: #1b2126;
+      --line: rgba(214, 220, 226, 0.12);
+      --line-strong: rgba(214, 220, 226, 0.2);
+      --ink: #eef2f4;
+      --muted: #a4afb6;
+      --accent: #3bb297;
+      --accent-2: #e8a566;
+      --danger: #d56657;
+      --danger-soft: rgba(213, 102, 87, 0.16);
+      --success-soft: rgba(59, 178, 151, 0.16);
+      --shadow: 0 22px 48px rgba(0, 0, 0, 0.34);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html, body {
+      margin: 0;
+      min-height: 100%;
+    }
+
+    body {
+      font-family: Georgia, "Times New Roman", serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(227, 154, 86, 0.24), transparent 24%),
+        radial-gradient(circle at bottom right, rgba(13, 124, 102, 0.18), transparent 28%),
+        linear-gradient(180deg, #fcf8f1 0%, var(--bg) 100%);
+    }
+
+    button,
+    input,
+    textarea,
+    select {
+      font: inherit;
+    }
+
+    button,
+    input,
+    textarea,
+    select {
+      max-width: 100%;
+    }
+
+    .shell {
+      width: min(1500px, calc(100vw - 32px));
+      margin: 16px auto;
+      display: grid;
+      grid-template-columns: 340px minmax(0, 1fr);
+      gap: 18px;
+      min-height: calc(100vh - 32px);
+    }
+
+    .sidebar,
+    .main {
+      min-width: 0;
+    }
+
+    .sidebar {
+      display: grid;
+      gap: 16px;
+      align-content: start;
+    }
+
+    .main {
+      display: grid;
+      gap: 16px;
+      align-content: start;
+    }
+
+    .panel,
+    .hero,
+    .status,
+    .table-shell {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      backdrop-filter: blur(10px);
+      box-shadow: var(--shadow);
+    }
+
+    .panel {
+      border-radius: var(--radius-lg);
+      padding: 18px;
+      overflow: hidden;
+    }
+
+    .hero {
+      border-radius: var(--radius-xl);
+      padding: 26px;
+      position: relative;
+      overflow: hidden;
+      background:
+        linear-gradient(135deg, rgba(255, 252, 247, 0.96), rgba(249, 243, 232, 0.9)),
+        var(--surface);
+    }
+
+    :root[data-theme="dark"] .hero {
+      background:
+        linear-gradient(135deg, rgba(28, 34, 39, 0.98), rgba(23, 28, 32, 0.94)),
+        var(--surface);
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      inset: auto -40px -50px auto;
+      width: 220px;
+      height: 220px;
+      border-radius: 999px;
+      background: radial-gradient(circle, rgba(13, 124, 102, 0.15), transparent 68%);
+      pointer-events: none;
+    }
+
+    .hero h1,
+    .panel h2,
+    .panel h3,
+    .login-card h1 {
+      margin: 0;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+    }
+
+    .hero h1 {
+      font-size: clamp(30px, 4vw, 42px);
+    }
+
+    .hero p,
+    .eyebrow,
+    .meta,
+    .hint,
+    .field-help,
+    .empty-note {
+      color: var(--muted);
+    }
+
+    .eyebrow {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.18em;
+      margin-bottom: 10px;
+    }
+
+    .hero p {
+      margin: 12px 0 0;
+      max-width: 720px;
+      line-height: 1.55;
+      font-size: 16px;
+    }
+
+    .toolbar,
+    .stack,
+    .inline-actions,
+    .section-head,
+    .field-grid,
+    .question-top,
+    .survey-meta {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .section-head,
+    .question-top {
+      justify-content: space-between;
+    }
+
+    .stack {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .field-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .field-grid.single {
+      grid-template-columns: 1fr;
+    }
+
+    label {
+      display: grid;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    input,
+    textarea,
+    select {
+      width: 100%;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.92);
+      color: var(--ink);
+      border-radius: var(--radius-md);
+      padding: 12px 14px;
+      transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+    }
+
+    :root[data-theme="dark"] input,
+    :root[data-theme="dark"] textarea,
+    :root[data-theme="dark"] select {
+      background: rgba(31, 37, 43, 0.96);
+      color: #eef2f4;
+      border-color: rgba(214, 220, 226, 0.12);
+    }
+
+    :root[data-theme="dark"] input::placeholder,
+    :root[data-theme="dark"] textarea::placeholder {
+      color: #8f9aa2;
+    }
+
+    input:focus,
+    textarea:focus,
+    select:focus {
+      outline: none;
+      border-color: rgba(13, 124, 102, 0.48);
+      box-shadow: 0 0 0 4px rgba(13, 124, 102, 0.12);
+      background: #fff;
+    }
+
+    :root[data-theme="dark"] input:focus,
+    :root[data-theme="dark"] textarea:focus,
+    :root[data-theme="dark"] select:focus {
+      background: #242b31;
+      color: #f4f7f8;
+      border-color: rgba(59, 178, 151, 0.45);
+      box-shadow: 0 0 0 4px rgba(59, 178, 151, 0.14);
+    }
+
+    textarea {
+      resize: vertical;
+      min-height: 110px;
+      line-height: 1.45;
+    }
+
+    button,
+    .button-link {
+      border: 0;
+      border-radius: 999px;
+      padding: 11px 16px;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+    }
+
+    button:hover,
+    .button-link:hover {
+      transform: translateY(-1px);
+    }
+
+    .primary {
+      background: var(--accent);
+      color: #fff;
+      box-shadow: 0 14px 30px rgba(13, 124, 102, 0.18);
+    }
+
+    .secondary {
+      background: #efe8dc;
+      color: var(--ink);
+    }
+
+    :root[data-theme="dark"] .secondary {
+      background: #2a3137;
+      color: var(--ink);
+    }
+
+    .warn {
+      background: #f0d4b1;
+      color: #493116;
+    }
+
+    :root[data-theme="dark"] .warn {
+      background: #4c3925;
+      color: #ffd7ae;
+    }
+
+    .danger {
+      background: var(--danger);
+      color: #fff;
+      box-shadow: 0 14px 30px rgba(180, 68, 53, 0.18);
+    }
+
+    .ghost {
+      background: transparent;
+      border: 1px solid var(--line);
+      color: var(--ink);
+    }
+
+    .status {
+      border-radius: var(--radius-lg);
+      padding: 14px 18px;
+      font-size: 15px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+
+    .status.ok {
+      background: var(--success-soft);
+      color: #0c6c58;
+      border-color: rgba(13, 124, 102, 0.18);
+    }
+
+    .status.error {
+      background: var(--danger-soft);
+      color: #8f3025;
+      border-color: rgba(180, 68, 53, 0.18);
+    }
+
+    .list {
+      display: grid;
+      gap: 10px;
+      max-height: 300px;
+      overflow: auto;
+      padding-right: 4px;
+    }
+
+    .list-item,
+    .survey-card,
+    .question-card,
+    .group-chip {
+      background: var(--surface-strong);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+    }
+
+    .survey-card,
+    .question-card {
+      padding: 16px;
+      overflow: hidden;
+    }
+
+    .survey-card {
+      cursor: pointer;
+      transition: border-color 0.16s ease, transform 0.16s ease, box-shadow 0.16s ease;
+    }
+
+    .survey-card:hover {
+      transform: translateY(-1px);
+      border-color: rgba(13, 124, 102, 0.28);
+      box-shadow: 0 14px 28px rgba(73, 47, 16, 0.08);
+    }
+
+    .survey-card.active {
+      border-color: rgba(13, 124, 102, 0.55);
+      background: linear-gradient(180deg, rgba(232, 247, 242, 0.9), rgba(255, 252, 247, 0.96));
+    }
+
+    .survey-card strong,
+    .question-card strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 18px;
+      color: var(--ink);
+    }
+
+    .meta {
+      font-size: 13px;
+      line-height: 1.4;
+      overflow-wrap: anywhere;
+    }
+
+    .badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: #f2ebdf;
+      color: #4d453d;
+      font-size: 13px;
+      border: 1px solid rgba(61, 46, 28, 0.08);
+    }
+
+    :root[data-theme="dark"] .badge {
+      background: #252c31;
+      color: #d7dde1;
+      border-color: rgba(214, 220, 226, 0.08);
+    }
+
+    .counter {
+      display: inline-grid;
+      place-items: center;
+      min-width: 30px;
+      height: 30px;
+      padding: 0 8px;
+      border-radius: 999px;
+      background: rgba(13, 124, 102, 0.12);
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .group-chip {
+      padding: 12px 14px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .checkbox-row {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      width: 100%;
+      cursor: pointer;
+      color: var(--ink);
+    }
+
+    .checkbox-row input {
+      width: 18px;
+      height: 18px;
+      margin: 0;
+      flex: 0 0 auto;
+    }
+
+    .questions-list,
+    .groups-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .question-card textarea[data-field="options"],
+    #new-question-options {
+      min-height: 124px;
+      font-family: "Consolas", "Courier New", monospace;
+      font-size: 14px;
+      white-space: pre-wrap;
+    }
+
+    .question-type {
+      display: inline-flex;
+      align-items: center;
+      padding: 7px 12px;
+      border-radius: 999px;
+      background: #efe6d7;
+      color: #564637;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    :root[data-theme="dark"] .question-type {
+      background: #2a3137;
+      color: #d7dde1;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.85fr);
+      gap: 16px;
+    }
+
+    .table-shell {
+      border-radius: var(--radius-xl);
+      overflow: hidden;
+    }
+
+    .table-head {
+      padding: 18px 20px 0;
+    }
+
+    .table-wrap {
+      overflow: auto;
+      max-width: 100%;
+      max-height: 65vh;
+      padding: 14px 20px 20px;
+    }
+
+    table {
+      width: 100%;
+      min-width: 900px;
+      border-collapse: collapse;
+      background: rgba(255, 255, 255, 0.65);
+      border-radius: 18px;
+      overflow: hidden;
+    }
+
+    th,
+    td {
+      padding: 12px 14px;
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid rgba(61, 46, 28, 0.08);
+      word-break: break-word;
+      white-space: normal;
+    }
+
+    thead th {
+      position: sticky;
+      top: 0;
+      background: #f7f1e7;
+      z-index: 1;
+      font-size: 13px;
+      color: #5b5248;
+    }
+
+    :root[data-theme="dark"] thead th {
+      background: #232a30;
+      color: #d7dde1;
+    }
+
+    tbody tr:nth-child(even) {
+      background: rgba(249, 244, 236, 0.65);
+    }
+
+    :root[data-theme="dark"] tbody tr:nth-child(even) {
+      background: rgba(34, 40, 46, 0.65);
+    }
+
+    .switcher {
+      display: grid;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .switcher-title {
+      color: var(--muted);
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .segmented {
+      display: inline-flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 6px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.45);
+      width: fit-content;
+      max-width: 100%;
+    }
+
+    :root[data-theme="dark"] .segmented {
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .segmented button {
+      min-width: 88px;
+      padding: 9px 14px;
+      background: transparent;
+      color: var(--muted);
+      box-shadow: none;
+    }
+
+    .segmented button.active {
+      background: var(--accent);
+      color: #fff;
+      box-shadow: 0 10px 22px rgba(13, 124, 102, 0.2);
+    }
+
+    .empty-state {
+      padding: 28px;
+      border-radius: var(--radius-xl);
+      text-align: center;
+      background: rgba(255, 252, 247, 0.82);
+      border: 1px dashed rgba(61, 46, 28, 0.18);
+      color: var(--muted);
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    @media (max-width: 1180px) {
+      .shell,
+      .layout,
+      .field-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .shell {
+        width: min(100vw - 24px, 1280px);
+      }
+    }
+
+    @media (max-width: 720px) {
+      .shell {
+        width: calc(100vw - 16px);
+        margin: 8px auto;
+        min-height: calc(100vh - 16px);
+      }
+
+      .hero,
+      .panel,
+      .status {
+        padding: 16px;
+        border-radius: 20px;
+      }
+
+      .table-wrap {
+        padding: 10px 12px 14px;
+      }
+
+      .toolbar,
+      .inline-actions,
+      .section-head,
+      .question-top {
+        align-items: stretch;
+      }
+
+      .toolbar > *,
+      .inline-actions > * {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <section class="hero">
+        <div class="eyebrow">Internal Panel</div>
+        <h1 id="hero-title">Survey control room</h1>
+        <p id="hero-description">Create surveys, edit questions, manage groups, and watch incoming answers update without reloading the page.</p>
+        <div class="badge-row">
+          <span id="hero-badge-live" class="badge">Live answers</span>
+          <span id="hero-badge-groups" class="badge">Group control</span>
+          <span id="hero-badge-export" class="badge">CSV export</span>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <h2 id="workspace-title">Workspace</h2>
+          <button id="logout" class="ghost" type="button">Log out</button>
+        </div>
+        <div class="field-grid single" style="margin-top: 14px;">
+          <label>
+            <span id="bot-id-label">Bot ID</span>
+            <input id="bot-id" type="number" min="1" value="1" />
+          </label>
+        </div>
+        <div class="switcher">
+          <div id="language-title" class="switcher-title">Language</div>
+          <div class="segmented">
+            <button id="lang-en" class="ghost" type="button">EN</button>
+            <button id="lang-uk" class="ghost" type="button">UK</button>
+          </div>
+        </div>
+        <div class="switcher">
+          <div id="theme-title" class="switcher-title">Theme</div>
+          <div class="segmented">
+            <button id="theme-light" class="ghost" type="button">Light</button>
+            <button id="theme-dark" class="ghost" type="button">Dark</button>
+          </div>
+        </div>
+        <div class="toolbar" style="margin-top: 12px;">
+          <button id="reload-all" class="secondary" type="button">Reload data</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <h2>Groups</h2>
+          <span id="group-count" class="counter">0</span>
+        </div>
+        <div class="field-grid single" style="margin-top: 14px;">
+          <label>
+            New group
+            <input id="new-group-name" type="text" maxlength="100" placeholder="Name of the group" />
+          </label>
+        </div>
+        <div class="toolbar" style="margin-top: 12px;">
+          <button id="create-group" class="primary" type="button">Create group</button>
+        </div>
+        <div id="group-list" class="list" style="margin-top: 16px;"></div>
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <h2>Surveys</h2>
+          <span id="survey-count" class="counter">0</span>
+        </div>
+        <div class="field-grid single" style="margin-top: 14px;">
+          <label>
+            Title
+            <input id="new-title" type="text" maxlength="200" placeholder="Survey title" />
+          </label>
+          <label>
+            Description
+            <textarea id="new-description" maxlength="500" placeholder="Short description"></textarea>
+          </label>
+        </div>
+        <div class="toolbar" style="margin-top: 12px;">
+          <button id="create-survey" class="primary" type="button">Create survey</button>
+        </div>
+        <div id="survey-list" class="list" style="margin-top: 16px;"></div>
+      </section>
+    </aside>
+
+    <main class="main">
+      <div id="status" class="status">Ready to work.</div>
+
+      <div id="empty-state" class="empty-state">
+        Select a survey from the left panel to open editing, group settings, and live results.
+      </div>
+
+      <div id="admin-view" class="hidden">
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <h2>Survey settings</h2>
+              <div class="hint">Safe editing, reset responses, export results.</div>
+            </div>
+            <div class="inline-actions">
+              <a id="export-link" class="button-link warn" href="#" target="_blank" rel="noopener">Export CSV</a>
+              <button id="reset-responses" class="secondary" type="button">Clear responses</button>
+              <button id="delete-survey" class="danger" type="button">Delete survey</button>
+            </div>
+          </div>
+
+          <div id="survey-stats" class="badge-row"></div>
+
+          <div class="field-grid" style="margin-top: 16px;">
+            <label>
+              Title
+              <input id="survey-title" type="text" maxlength="200" />
+            </label>
+            <label>
+              Description
+              <textarea id="survey-description" maxlength="500"></textarea>
+            </label>
+          </div>
+
+          <div class="toolbar" style="margin-top: 14px;">
+            <button id="save-survey" class="primary" type="button">Save changes</button>
+          </div>
+        </section>
+
+        <div class="layout">
+          <section class="panel">
+            <div class="section-head">
+              <div>
+                <h2>Questions</h2>
+                <div class="hint">Options are entered one per line.</div>
+              </div>
+            </div>
+            <div id="questions-list" class="questions-list" style="margin-top: 16px;"></div>
+          </section>
+
+          <div class="stack">
+            <section class="panel">
+              <div class="section-head">
+                <div>
+                  <h2>Survey groups</h2>
+                  <div class="hint">Select where this survey is available.</div>
+                </div>
+              </div>
+              <div id="groups-list" class="groups-list" style="margin-top: 16px;"></div>
+            </section>
+
+            <section class="panel">
+              <div class="section-head">
+                <div>
+                  <h2>Add question</h2>
+                  <div class="hint">Text questions ignore the options field.</div>
+                </div>
+              </div>
+              <div class="field-grid single" style="margin-top: 14px;">
+                <label>
+                  Type
+                  <select id="new-question-type">
+                    <option value="single">single</option>
+                    <option value="text">text</option>
+                  </select>
+                </label>
+                <label>
+                  Text
+                  <textarea id="new-question-text" maxlength="500" placeholder="Write the question"></textarea>
+                </label>
+                <div id="new-question-options-wrap">
+                  <label>
+                    Options
+                    <textarea id="new-question-options" placeholder="One option per line"></textarea>
+                  </label>
+                </div>
+              </div>
+              <div class="toolbar" style="margin-top: 14px;">
+                <button id="add-question" class="primary" type="button">Add question</button>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <section class="table-shell">
+          <div class="table-head section-head">
+            <div>
+              <h2>Live responses</h2>
+              <div id="results-meta" class="hint">No data yet.</div>
+            </div>
+            <div class="inline-actions">
+              <button id="refresh-results" class="secondary" type="button">Refresh now</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <div id="results-wrap"></div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const API_BASE = '/api/v1';
+    const state = {
+      botId: 1,
+      surveys: [],
+      groups: [],
+      activeSurveyId: null,
+      activeDetail: null,
+      resultsTimer: null,
+      language: 'en',
+      theme: 'light',
+    };
+
+    const el = {
+      botId: document.getElementById('bot-id'),
+      langEn: document.getElementById('lang-en'),
+      langUk: document.getElementById('lang-uk'),
+      themeLight: document.getElementById('theme-light'),
+      themeDark: document.getElementById('theme-dark'),
+      reloadAll: document.getElementById('reload-all'),
+      logout: document.getElementById('logout'),
+      surveyCount: document.getElementById('survey-count'),
+      groupCount: document.getElementById('group-count'),
+      surveyList: document.getElementById('survey-list'),
+      groupList: document.getElementById('group-list'),
+      status: document.getElementById('status'),
+      emptyState: document.getElementById('empty-state'),
+      adminView: document.getElementById('admin-view'),
+      newTitle: document.getElementById('new-title'),
+      newDescription: document.getElementById('new-description'),
+      newGroupName: document.getElementById('new-group-name'),
+      createSurvey: document.getElementById('create-survey'),
+      createGroup: document.getElementById('create-group'),
+      surveyTitle: document.getElementById('survey-title'),
+      surveyDescription: document.getElementById('survey-description'),
+      saveSurvey: document.getElementById('save-survey'),
+      resetResponses: document.getElementById('reset-responses'),
+      deleteSurvey: document.getElementById('delete-survey'),
+      exportLink: document.getElementById('export-link'),
+      surveyStats: document.getElementById('survey-stats'),
+      groupsList: document.getElementById('groups-list'),
+      questionsList: document.getElementById('questions-list'),
+      newQuestionType: document.getElementById('new-question-type'),
+      newQuestionText: document.getElementById('new-question-text'),
+      newQuestionOptions: document.getElementById('new-question-options'),
+      newQuestionOptionsWrap: document.getElementById('new-question-options-wrap'),
+      addQuestion: document.getElementById('add-question'),
+      refreshResults: document.getElementById('refresh-results'),
+      resultsWrap: document.getElementById('results-wrap'),
+      resultsMeta: document.getElementById('results-meta'),
+    };
+
+    const translations = {
+      en: {
+        heroTitle: 'Survey control room',
+        heroDescription: 'Create surveys, edit questions, manage groups, and watch incoming answers update without reloading the page.',
+        heroBadgeLive: 'Live answers',
+        heroBadgeGroups: 'Group control',
+        heroBadgeExport: 'CSV export',
+        workspaceTitle: 'Workspace',
+        botIdLabel: 'Bot ID',
+        languageTitle: 'Language',
+        themeTitle: 'Theme',
+        light: 'Light',
+        dark: 'Dark',
+        logout: 'Log out',
+        reload: 'Reload data',
+        groups: 'Groups',
+        newGroup: 'New group',
+        groupName: 'Group name',
+        createGroup: 'Create group',
+        surveys: 'Surveys',
+        title: 'Title',
+        description: 'Description',
+        createSurvey: 'Create survey',
+        statusReady: 'Ready to work.',
+        emptyState: 'Select a survey from the left panel to open editing, group settings, and live results.',
+        surveySettings: 'Survey settings',
+        surveySettingsHint: 'Safe editing, reset responses, export results.',
+        exportCsv: 'Export CSV',
+        clearResponses: 'Clear responses',
+        deleteSurvey: 'Delete survey',
+        saveChanges: 'Save changes',
+        questions: 'Questions',
+        questionsHint: 'Options are entered one per line.',
+        surveyGroups: 'Survey groups',
+        surveyGroupsHint: 'Select where this survey is available.',
+        addQuestion: 'Add question',
+        addQuestionHint: 'Text questions ignore the options field.',
+        type: 'Type',
+        text: 'Text',
+        options: 'Options',
+        addQuestionButton: 'Add question',
+        liveResponses: 'Live responses',
+        noDataYet: 'No data yet.',
+        refreshNow: 'Refresh now',
+        noSurveysYet: 'No surveys yet.',
+        noGroupsYet: 'No groups yet.',
+        noDescription: 'No description',
+        rename: 'Rename',
+        delete: 'Delete',
+        selectSurveyFirst: 'Select a survey first.',
+        noGroupsForBot: 'No groups found for this Bot ID.',
+        noQuestionsYet: 'No questions yet.',
+        question: 'Question',
+        editQuestionHint: 'Edit text, type, and answer options.',
+        saveQuestion: 'Save question',
+        deleteQuestion: 'Delete question',
+        noResponsesYet: 'No responses yet.',
+        rowsUpdated: 'Rows: {count} | Updated: {time}',
+        session: 'Session',
+        group: 'Group',
+        user: 'User',
+        status: 'Status',
+        started: 'Started',
+        finished: 'Finished',
+        unknown: 'unknown',
+        questionsCount: 'Questions',
+        sessionsCount: 'Sessions',
+        finishedCount: 'Finished',
+        inProgressCount: 'In progress',
+        deleteGroupConfirm: 'Delete this group?',
+        deleteQuestionConfirm: 'Delete this question?',
+        deleteSurveyConfirm: 'Delete this survey?',
+        emptySurveyTitle: 'Enter a survey title.',
+        emptyGroupName: 'Enter a group name.',
+        groupNameEmpty: 'Group name cannot be empty.',
+        surveyCreated: 'Survey created.',
+        groupCreated: 'Group created.',
+        groupRenamed: 'Group renamed.',
+        groupDeleted: 'Group deleted.',
+        surveyDeleted: 'Survey deleted.',
+        surveyUpdated: 'Survey updated.',
+        questionUpdated: 'Question updated.',
+        questionDeleted: 'Question deleted.',
+        questionAdded: 'Question added.',
+        groupsUpdated: 'Survey groups updated.',
+        dataReloaded: 'Data reloaded.',
+        responsesCleared: 'Responses cleared. Deleted sessions: {count}.',
+        resetConfirm: 'This will delete sessions: {total}\nFinished: {finished}\nIn progress: {inProgress}\n\nAfter this, you will be able to change question structure again. Continue?',
+        nameOfGroup: 'Name of the group',
+        surveyTitlePlaceholder: 'Survey title',
+        shortDescription: 'Short description',
+        writeQuestion: 'Write the question',
+        oneOptionPerLine: 'One option per line',
+      },
+      uk: {
+        heroTitle: 'Панель керування опитуваннями',
+        heroDescription: 'Створюй опитування, редагуй питання, керуй групами й переглядай відповіді в реальному часі без перезавантаження сторінки.',
+        heroBadgeLive: 'Живі відповіді',
+        heroBadgeGroups: 'Керування групами',
+        heroBadgeExport: 'Експорт CSV',
+        workspaceTitle: 'Робоча зона',
+        botIdLabel: 'Bot ID',
+        languageTitle: 'Мова',
+        themeTitle: 'Тема',
+        light: 'Світла',
+        dark: 'Темна',
+        logout: 'Вийти',
+        reload: 'Оновити дані',
+        groups: 'Групи',
+        newGroup: 'Нова група',
+        groupName: 'Назва групи',
+        createGroup: 'Створити групу',
+        surveys: 'Опитування',
+        title: 'Назва',
+        description: 'Опис',
+        createSurvey: 'Створити опитування',
+        statusReady: 'Готово до роботи.',
+        emptyState: 'Оберіть опитування зліва, щоб відкрити редагування, налаштування груп і живі результати.',
+        surveySettings: 'Налаштування опитування',
+        surveySettingsHint: 'Безпечне редагування, очищення відповідей і експорт результатів.',
+        exportCsv: 'Експорт CSV',
+        clearResponses: 'Очистити відповіді',
+        deleteSurvey: 'Видалити опитування',
+        saveChanges: 'Зберегти зміни',
+        questions: 'Питання',
+        questionsHint: 'Для варіантів відповідей використовуй один рядок на один варіант.',
+        surveyGroups: 'Групи опитування',
+        surveyGroupsHint: 'Оберіть, де це опитування буде доступне.',
+        addQuestion: 'Додати питання',
+        addQuestionHint: 'Для текстового питання поле варіантів не використовується.',
+        type: 'Тип',
+        text: 'Текст',
+        options: 'Варіанти',
+        addQuestionButton: 'Додати питання',
+        liveResponses: 'Живі відповіді',
+        noDataYet: 'Даних поки немає.',
+        refreshNow: 'Оновити зараз',
+        noSurveysYet: 'Опитувань поки немає.',
+        noGroupsYet: 'Груп поки немає.',
+        noDescription: 'Без опису',
+        rename: 'Перейменувати',
+        delete: 'Видалити',
+        selectSurveyFirst: 'Спочатку оберіть опитування.',
+        noGroupsForBot: 'Для цього Bot ID груп не знайдено.',
+        noQuestionsYet: 'Питань поки немає.',
+        question: 'Питання',
+        editQuestionHint: 'Редагуй текст, тип і варіанти відповідей.',
+        saveQuestion: 'Зберегти питання',
+        deleteQuestion: 'Видалити питання',
+        noResponsesYet: 'Відповідей поки немає.',
+        rowsUpdated: 'Рядків: {count} | Оновлено: {time}',
+        session: 'Сесія',
+        group: 'Група',
+        user: 'Користувач',
+        status: 'Статус',
+        started: 'Початок',
+        finished: 'Завершення',
+        unknown: 'невідомо',
+        questionsCount: 'Питань',
+        sessionsCount: 'Сесій',
+        finishedCount: 'Завершено',
+        inProgressCount: 'У процесі',
+        deleteGroupConfirm: 'Видалити цю групу?',
+        deleteQuestionConfirm: 'Видалити це питання?',
+        deleteSurveyConfirm: 'Видалити це опитування?',
+        emptySurveyTitle: 'Введіть назву опитування.',
+        emptyGroupName: 'Введіть назву групи.',
+        groupNameEmpty: 'Назва групи не може бути порожньою.',
+        surveyCreated: 'Опитування створено.',
+        groupCreated: 'Групу створено.',
+        groupRenamed: 'Групу перейменовано.',
+        groupDeleted: 'Групу видалено.',
+        surveyDeleted: 'Опитування видалено.',
+        surveyUpdated: 'Опитування оновлено.',
+        questionUpdated: 'Питання оновлено.',
+        questionDeleted: 'Питання видалено.',
+        questionAdded: 'Питання додано.',
+        groupsUpdated: 'Групи опитування оновлено.',
+        dataReloaded: 'Дані оновлено.',
+        responsesCleared: 'Відповіді очищено. Видалено сесій: {count}.',
+        resetConfirm: 'Буде видалено сесій: {total}\nЗавершених: {finished}\nАктивних: {inProgress}\n\nПісля цього структуру питань знову можна буде редагувати. Продовжити?',
+        nameOfGroup: 'Назва групи',
+        surveyTitlePlaceholder: 'Назва опитування',
+        shortDescription: 'Короткий опис',
+        writeQuestion: 'Введіть текст питання',
+        oneOptionPerLine: 'Один варіант у кожному рядку',
+      },
+    };
+
+    function setStatus(message, kind = '') {
+      el.status.textContent = message;
+      el.status.className = 'status' + (kind ? ' ' + kind : '');
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+    }
+
+    function answerToText(value) {
+      if (value == null) return '';
+      if (typeof value === 'string') return value;
+      if (typeof value === 'object' && Array.isArray(value.option_texts)) {
+        return value.option_texts.join(' | ');
+      }
+      return String(value);
+    }
+
+    function formatDateTime(value) {
+      if (!value) return '';
+      const parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) return String(value);
+      return parsed.toLocaleString(state.language === 'uk' ? 'uk-UA' : 'en-US', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      });
+    }
+
+    function normalizeOptionsText(value) {
+      return String(value || '')
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+    }
+
+    function optionsToTextareaValue(options) {
+      return (options || []).map((option) => option.text).join('\n');
+    }
+
+    function t(key, params = {}) {
+      const dictionary = translations[state.language] || translations.en;
+      let value = dictionary[key] || translations.en[key] || key;
+      for (const [paramKey, paramValue] of Object.entries(params)) {
+        value = value.replaceAll('{' + paramKey + '}', String(paramValue));
+      }
+      return value;
+    }
+
+    function applyTheme() {
+      document.documentElement.dataset.theme = state.theme;
+      el.themeLight.classList.toggle('active', state.theme === 'light');
+      el.themeDark.classList.toggle('active', state.theme === 'dark');
+    }
+
+    function applyLanguage() {
+      document.documentElement.lang = state.language === 'uk' ? 'uk' : 'en';
+      el.langEn.classList.toggle('active', state.language === 'en');
+      el.langUk.classList.toggle('active', state.language === 'uk');
+
+      document.getElementById('hero-title').textContent = t('heroTitle');
+      document.getElementById('hero-description').textContent = t('heroDescription');
+      document.getElementById('hero-badge-live').textContent = t('heroBadgeLive');
+      document.getElementById('hero-badge-groups').textContent = t('heroBadgeGroups');
+      document.getElementById('hero-badge-export').textContent = t('heroBadgeExport');
+      document.getElementById('workspace-title').textContent = t('workspaceTitle');
+      document.getElementById('bot-id-label').textContent = t('botIdLabel');
+      document.getElementById('language-title').textContent = t('languageTitle');
+      document.getElementById('theme-title').textContent = t('themeTitle');
+      el.logout.textContent = t('logout');
+      el.themeLight.textContent = t('light');
+      el.themeDark.textContent = t('dark');
+      el.reloadAll.textContent = t('reload');
+
+      const statusOk = el.status.classList.contains('ok');
+      const statusError = el.status.classList.contains('error');
+      if (!statusOk && !statusError) {
+        el.status.textContent = t('statusReady');
+      }
+
+      el.emptyState.textContent = t('emptyState');
+      el.resultsMeta.textContent = state.activeSurveyId ? el.resultsMeta.textContent : t('noDataYet');
+      el.newGroupName.placeholder = t('nameOfGroup');
+      el.newTitle.placeholder = t('surveyTitlePlaceholder');
+      el.newDescription.placeholder = t('shortDescription');
+      el.newQuestionText.placeholder = t('writeQuestion');
+      el.newQuestionOptions.placeholder = t('oneOptionPerLine');
+
+      const groupsPanel = el.createGroup.closest('.panel');
+      groupsPanel.querySelector('h2').textContent = t('groups');
+      groupsPanel.querySelector('label').childNodes[0].textContent = t('newGroup');
+      el.createGroup.textContent = t('createGroup');
+
+      const surveyPanel = el.createSurvey.closest('.panel');
+      surveyPanel.querySelector('h2').textContent = t('surveys');
+      surveyPanel.querySelectorAll('label')[0].childNodes[0].textContent = t('title');
+      surveyPanel.querySelectorAll('label')[1].childNodes[0].textContent = t('description');
+      el.createSurvey.textContent = t('createSurvey');
+
+      const settingsPanel = el.saveSurvey.closest('.panel');
+      settingsPanel.querySelector('h2').textContent = t('surveySettings');
+      settingsPanel.querySelector('.hint').textContent = t('surveySettingsHint');
+      el.exportLink.textContent = t('exportCsv');
+      el.resetResponses.textContent = t('clearResponses');
+      el.deleteSurvey.textContent = t('deleteSurvey');
+      settingsPanel.querySelectorAll('label')[0].childNodes[0].textContent = t('title');
+      settingsPanel.querySelectorAll('label')[1].childNodes[0].textContent = t('description');
+      el.saveSurvey.textContent = t('saveChanges');
+
+      const questionsPanel = el.questionsList.closest('.panel');
+      questionsPanel.querySelector('h2').textContent = t('questions');
+      questionsPanel.querySelector('.hint').textContent = t('questionsHint');
+
+      const groupsListPanel = el.groupsList.closest('.panel');
+      groupsListPanel.querySelector('h2').textContent = t('surveyGroups');
+      groupsListPanel.querySelector('.hint').textContent = t('surveyGroupsHint');
+
+      const addQuestionPanel = el.addQuestion.closest('.panel');
+      addQuestionPanel.querySelector('h2').textContent = t('addQuestion');
+      addQuestionPanel.querySelector('.hint').textContent = t('addQuestionHint');
+      addQuestionPanel.querySelectorAll('label')[0].childNodes[0].textContent = t('type');
+      addQuestionPanel.querySelectorAll('label')[1].childNodes[0].textContent = t('text');
+      addQuestionPanel.querySelectorAll('label')[2].childNodes[0].textContent = t('options');
+      el.addQuestion.textContent = t('addQuestionButton');
+
+      const resultsPanel = el.refreshResults.closest('.table-shell');
+      resultsPanel.querySelector('h2').textContent = t('liveResponses');
+      if (!el.resultsWrap.querySelector('table')) {
+        el.resultsMeta.textContent = t('noDataYet');
+      }
+      el.refreshResults.textContent = t('refreshNow');
+
+      renderSurveyList();
+      renderGroupList();
+      if (state.activeDetail) {
+        renderDetail(state.activeDetail);
+      }
+    }
+
+    function setLanguage(language) {
+      state.language = language === 'uk' ? 'uk' : 'en';
+      window.localStorage.setItem('survey_admin_language', state.language);
+      applyLanguage();
+    }
+
+    function setTheme(theme) {
+      state.theme = theme === 'dark' ? 'dark' : 'light';
+      window.localStorage.setItem('survey_admin_theme', state.theme);
+      applyTheme();
+    }
+
+    async function request(path, options = {}) {
+      const response = await fetch(API_BASE + path, {
+        headers: {
+          'Content-Type': 'application/json',
+          ...(options.headers || {}),
+        },
+        credentials: 'same-origin',
+        ...options,
+      });
+
+      if (!response.ok) {
+        let detail = response.statusText;
+        try {
+          const payload = await response.json();
+          detail = typeof payload.detail === 'string' ? payload.detail : JSON.stringify(payload);
+        } catch {}
+        throw new Error(detail);
+      }
+
+      if (response.status === 204) return null;
+      return response.json();
+    }
+
+    function getBotId() {
+      const queryValue = new URLSearchParams(window.location.search).get('bot_id');
+      const cachedValue = window.localStorage.getItem('survey_admin_bot_id');
+      const value = Number(queryValue || cachedValue || el.botId.value || 1);
+      return Number.isFinite(value) && value > 0 ? value : 1;
+    }
+
+    async function boot() {
+      state.botId = getBotId();
+      state.language = window.localStorage.getItem('survey_admin_language') || 'en';
+      state.theme = window.localStorage.getItem('survey_admin_theme') || 'light';
+      el.botId.value = String(state.botId);
+      applyTheme();
+      applyLanguage();
+      syncNewQuestionOptions();
+      await loadAll();
+    }
+
+    async function loadAll() {
+      window.localStorage.setItem('survey_admin_bot_id', String(state.botId));
+      await Promise.all([loadGroups(), loadSurveys()]);
+
+      if (state.activeSurveyId) {
+        await selectSurvey(state.activeSurveyId);
+        return;
+      }
+
+      if (state.surveys[0]) {
+        await selectSurvey(state.surveys[0].id);
+        return;
+      }
+
+      state.activeDetail = null;
+      state.activeSurveyId = null;
+      el.adminView.classList.add('hidden');
+      el.emptyState.classList.remove('hidden');
+      el.resultsWrap.innerHTML = '';
+      el.resultsMeta.textContent = 'No data yet.';
+    }
+
+    async function loadGroups() {
+      const payload = await request('/groups?bot_id=' + state.botId);
+      state.groups = Array.isArray(payload) ? payload : [];
+      renderGroupList();
+      renderGroups();
+    }
+
+    async function loadSurveys() {
+      const payload = await request('/surveys?bot_id=' + state.botId);
+      state.surveys = Array.isArray(payload.items) ? payload.items : [];
+      renderSurveyList();
+    }
+
+    function renderSurveyList() {
+      el.surveyCount.textContent = String(state.surveys.length);
+
+      if (!state.surveys.length) {
+        el.surveyList.innerHTML = '<div class="empty-note">' + escapeHtml(t('noSurveysYet')) + '</div>';
+        return;
+      }
+
+      el.surveyList.innerHTML = state.surveys.map((survey) => `
+        <article class="survey-card${survey.id === state.activeSurveyId ? ' active' : ''}" data-survey-id="${survey.id}">
+          <strong>${escapeHtml(survey.title)}</strong>
+          <div class="meta">${escapeHtml(survey.description || t('noDescription'))}</div>
+          <div class="badge-row">
+            <span class="badge">${escapeHtml(t('questionsCount'))} ${survey.questions_count}</span>
+            <span class="badge">${escapeHtml(t('sessionsCount'))} ${survey.sessions_count}</span>
+            <span class="badge">${escapeHtml(t('finishedCount'))} ${survey.finished_sessions_count}</span>
+          </div>
+        </article>
+      `).join('');
+
+      for (const node of el.surveyList.querySelectorAll('[data-survey-id]')) {
+        node.addEventListener('click', () => selectSurvey(Number(node.dataset.surveyId)));
+      }
+    }
+
+    function renderGroupList() {
+      el.groupCount.textContent = String(state.groups.length);
+
+      if (!state.groups.length) {
+        el.groupList.innerHTML = '<div class="empty-note">' + escapeHtml(t('noGroupsYet')) + '</div>';
+        return;
+      }
+
+      el.groupList.innerHTML = state.groups.map((group) => `
+        <div class="group-chip">
+          <label>
+            ${escapeHtml(t('groupName'))}
+            <input data-group-name="${group.id}" type="text" maxlength="100" value="${escapeHtml(group.name)}" />
+          </label>
+          <div class="toolbar">
+            <button class="secondary" data-action="rename-group" data-group-id="${group.id}" type="button">${escapeHtml(t('rename'))}</button>
+            <button class="danger" data-action="delete-group" data-group-id="${group.id}" type="button">${escapeHtml(t('delete'))}</button>
+          </div>
+        </div>
+      `).join('');
+
+      for (const button of el.groupList.querySelectorAll('[data-action="rename-group"]')) {
+        button.addEventListener('click', async () => {
+          const id = Number(button.dataset.groupId);
+          const input = el.groupList.querySelector('[data-group-name="' + id + '"]');
+          await renameGroup(id, input.value.trim());
+        });
+      }
+
+      for (const button of el.groupList.querySelectorAll('[data-action="delete-group"]')) {
+        button.addEventListener('click', async () => {
+          const id = Number(button.dataset.groupId);
+          if (!window.confirm(t('deleteGroupConfirm'))) return;
+          await deleteGroup(id);
+        });
+      }
+    }
+
+    async function selectSurvey(id) {
+      state.activeSurveyId = id;
+      renderSurveyList();
+
+      try {
+        const detail = await request('/surveys/' + id + '/detail');
+        state.activeDetail = detail;
+        renderDetail(detail);
+        await loadResults();
+        startPolling();
+      } catch (error) {
+        setStatus(error.message, 'error');
+      }
+    }
+
+    function renderDetail(detail) {
+      el.emptyState.classList.add('hidden');
+      el.adminView.classList.remove('hidden');
+      el.surveyTitle.value = detail.survey.title || '';
+      el.surveyDescription.value = detail.survey.description || '';
+      el.exportLink.href = API_BASE + '/surveys/' + detail.survey.id + '/results/export';
+      el.surveyStats.innerHTML = [
+        [t('questionsCount'), detail.stats.questions_count],
+        [t('sessionsCount'), detail.stats.sessions_count],
+        [t('finishedCount'), detail.stats.finished_sessions_count],
+        [t('inProgressCount'), detail.stats.in_progress_sessions_count],
+      ].map(([label, value]) => `<span class="badge">${escapeHtml(label)} <strong>${escapeHtml(value)}</strong></span>`).join('');
+      renderGroups();
+      renderQuestions();
+    }
+
+    function renderGroups() {
+      if (!state.activeDetail) {
+        el.groupsList.innerHTML = '<div class="empty-note">' + escapeHtml(t('selectSurveyFirst')) + '</div>';
+        return;
+      }
+
+      const activeGroupIds = new Set((state.activeDetail.groups || []).map((group) => group.id));
+
+      if (!state.groups.length) {
+        el.groupsList.innerHTML = '<div class="empty-note">' + escapeHtml(t('noGroupsForBot')) + '</div>';
+        return;
+      }
+
+      el.groupsList.innerHTML = state.groups.map((group) => `
+        <label class="group-chip checkbox-row">
+          <input type="checkbox" data-group-id="${group.id}" ${activeGroupIds.has(group.id) ? 'checked' : ''} />
+          <span>${escapeHtml(group.name)}</span>
+        </label>
+      `).join('');
+
+      for (const node of el.groupsList.querySelectorAll('[data-group-id]')) {
+        node.addEventListener('change', async () => {
+          await toggleGroup(Number(node.dataset.groupId), node.checked);
+        });
+      }
+    }
+
+    function renderQuestions() {
+      const questions = (state.activeDetail && state.activeDetail.questions) || [];
+
+      if (!questions.length) {
+        el.questionsList.innerHTML = '<div class="empty-note">' + escapeHtml(t('noQuestionsYet')) + '</div>';
+        return;
+      }
+
+      el.questionsList.innerHTML = questions.map((question) => `
+        <article class="question-card" data-question-id="${question.id}">
+          <div class="question-top">
+            <div>
+              <strong>${escapeHtml(t('question'))} ${question.position}</strong>
+              <div class="hint">${escapeHtml(t('editQuestionHint'))}</div>
+            </div>
+            <span class="question-type">${escapeHtml(question.type)}</span>
+          </div>
+
+          <div class="field-grid" style="margin-top: 16px;">
+            <label>
+              ${escapeHtml(t('type'))}
+              <select data-field="type">
+                <option value="single" ${question.type === 'single' ? 'selected' : ''}>single</option>
+                <option value="text" ${question.type === 'text' ? 'selected' : ''}>text</option>
+              </select>
+            </label>
+            <label>
+              ${escapeHtml(t('text'))}
+              <textarea data-field="text">${escapeHtml(question.text)}</textarea>
+            </label>
+          </div>
+
+          <div data-role="options-wrap" style="margin-top: 14px;">
+            ${question.type === 'single' ? `
+              <label>
+                ${escapeHtml(t('options'))}
+                <textarea data-field="options" placeholder="${escapeHtml(t('oneOptionPerLine'))}">${escapeHtml(optionsToTextareaValue(question.options || []))}</textarea>
+              </label>
+            ` : ''}
+          </div>
+
+          <div class="toolbar" style="margin-top: 16px;">
+            <button class="primary" data-action="save-question" type="button">${escapeHtml(t('saveQuestion'))}</button>
+            <button class="danger" data-action="delete-question" type="button">${escapeHtml(t('deleteQuestion'))}</button>
+          </div>
+        </article>
+      `).join('');
+
+      for (const card of el.questionsList.querySelectorAll('[data-question-id]')) {
+        const typeSelect = card.querySelector('[data-field="type"]');
+        typeSelect.addEventListener('change', () => syncQuestionOptionsBlock(card));
+        syncQuestionOptionsBlock(card);
+      }
+
+      for (const button of el.questionsList.querySelectorAll('[data-action="save-question"]')) {
+        button.addEventListener('click', async () => {
+          const card = button.closest('[data-question-id]');
+          await saveQuestion(Number(card.dataset.questionId), card);
+        });
+      }
+
+      for (const button of el.questionsList.querySelectorAll('[data-action="delete-question"]')) {
+        button.addEventListener('click', async () => {
+          const card = button.closest('[data-question-id]');
+          const id = Number(card.dataset.questionId);
+          if (!window.confirm(t('deleteQuestionConfirm'))) return;
+
+          try {
+            await request('/surveys/questions/' + id, { method: 'DELETE' });
+            setStatus(t('questionDeleted'), 'ok');
+            await selectSurvey(state.activeSurveyId);
+            await loadSurveys();
+          } catch (error) {
+            setStatus(error.message, 'error');
+          }
+        });
+      }
+    }
+
+    function syncQuestionOptionsBlock(card) {
+      const type = card.querySelector('[data-field="type"]').value;
+      const typeBadge = card.querySelector('.question-type');
+      const wrap = card.querySelector('[data-role="options-wrap"]');
+      const existing = card.querySelector('[data-field="options"]');
+      const currentValue = existing ? existing.value : '';
+
+      if (typeBadge) typeBadge.textContent = type;
+
+      wrap.innerHTML = type === 'single' ? `
+        <label>
+          ${escapeHtml(t('options'))}
+          <textarea data-field="options" placeholder="${escapeHtml(t('oneOptionPerLine'))}">${escapeHtml(currentValue)}</textarea>
+        </label>
+      ` : '';
+    }
+
+    async function saveQuestion(id, card) {
+      const type = card.querySelector('[data-field="type"]').value;
+      const text = card.querySelector('[data-field="text"]').value.trim();
+      const optionsField = card.querySelector('[data-field="options"]');
+      const options = optionsField ? normalizeOptionsText(optionsField.value) : null;
+
+      try {
+        await request('/surveys/questions/' + id, {
+          method: 'PATCH',
+          body: JSON.stringify({ type, text, options }),
+        });
+        setStatus(t('questionUpdated'), 'ok');
+        await selectSurvey(state.activeSurveyId);
+        await loadSurveys();
+      } catch (error) {
+        setStatus(error.message, 'error');
+      }
+    }
+
+    async function toggleGroup(groupId, checked) {
+      try {
+        if (checked) {
+          await request('/groups/' + groupId + '/surveys/' + state.activeSurveyId, {
+            method: 'POST',
+            body: JSON.stringify({}),
+          });
+        } else {
+          await request('/groups/' + groupId + '/surveys/' + state.activeSurveyId, {
+            method: 'DELETE',
+          });
+        }
+
+        setStatus(t('groupsUpdated'), 'ok');
+        const detail = await request('/surveys/' + state.activeSurveyId + '/detail');
+        state.activeDetail = detail;
+        renderDetail(detail);
+      } catch (error) {
+        setStatus(error.message, 'error');
+        renderGroups();
+      }
+    }
+
+    async function loadResults() {
+      if (!state.activeSurveyId) return;
+
+      try {
+        const payload = await request('/surveys/' + state.activeSurveyId + '/results');
+        renderResults(payload);
+      } catch (error) {
+        setStatus(error.message, 'error');
+      }
+    }
+
+    function renderResults(payload) {
+      const questions = payload.questions || [];
+      const rows = payload.results || [];
+
+      const timeLocale = state.language === 'uk' ? 'uk-UA' : 'en-US';
+      el.resultsMeta.textContent = t('rowsUpdated', {
+        count: rows.length,
+        time: new Date().toLocaleTimeString(timeLocale),
+      });
+
+      if (!rows.length) {
+        el.resultsWrap.innerHTML = '<div class="empty-note">' + escapeHtml(t('noResponsesYet')) + '</div>';
+        return;
+      }
+
+      const header = `
+        <thead>
+          <tr>
+            <th>${escapeHtml(t('session'))}</th>
+            <th>${escapeHtml(t('group'))}</th>
+            <th>${escapeHtml(t('user'))}</th>
+            <th>${escapeHtml(t('status'))}</th>
+            <th>${escapeHtml(t('started'))}</th>
+            <th>${escapeHtml(t('finished'))}</th>
+            ${questions.map((question) => '<th>' + escapeHtml(question.text) + '</th>').join('')}
+          </tr>
+        </thead>
+      `;
+
+      const body = rows.map((row) => {
+        const user = row.user || {};
+        const userLabel = user.username || (user.telegram_id ? 'tg:' + user.telegram_id : t('unknown'));
+
+        return `
+          <tr>
+            <td>${escapeHtml(row.session_id)}</td>
+            <td>${escapeHtml(row.group_id)}</td>
+            <td>${escapeHtml(userLabel)}</td>
+            <td>${escapeHtml(row.status)}</td>
+            <td>${escapeHtml(formatDateTime(row.started_at))}</td>
+            <td>${escapeHtml(formatDateTime(row.finished_at))}</td>
+            ${questions.map((question) => '<td>' + escapeHtml(answerToText(row.answers[String(question.id)])) + '</td>').join('')}
+          </tr>
+        `;
+      }).join('');
+
+      el.resultsWrap.innerHTML = '<table>' + header + '<tbody>' + body + '</tbody></table>';
+    }
+
+    function startPolling() {
+      if (state.resultsTimer) {
+        window.clearInterval(state.resultsTimer);
+      }
+
+      state.resultsTimer = window.setInterval(() => {
+        if (state.activeSurveyId) {
+          loadResults();
+        }
+      }, 5000);
+    }
+
+    async function createSurvey() {
+      const title = el.newTitle.value.trim();
+      const description = el.newDescription.value.trim();
+
+      if (!title) {
+        setStatus(t('emptySurveyTitle'), 'error');
+        return;
+      }
+
+      try {
+        const payload = await request('/surveys', {
+          method: 'POST',
+          body: JSON.stringify({
+            bot_id: state.botId,
+            title,
+            description: description || null,
+            created_by: null,
+          }),
+        });
+
+        el.newTitle.value = '';
+        el.newDescription.value = '';
+        setStatus(t('surveyCreated'), 'ok');
+        await loadSurveys();
+        await selectSurvey(payload.id);
+      } catch (error) {
+        setStatus(error.message, 'error');
+      }
+    }
+
+    async function createGroup() {
+      const name = el.newGroupName.value.trim();
+
+      if (!name) {
+        setStatus(t('emptyGroupName'), 'error');
+        return;
+      }
+
+      try {
+        await request('/groups', {
+          method: 'POST',
+          body: JSON.stringify({
+            bot_id: state.botId,
+            name,
+            created_by: null,
+          }),
+        });
+
+        el.newGroupName.value = '';
+        setStatus(t('groupCreated'), 'ok');
+        await loadGroups();
+      } catch (error) {
+        setStatus(error.message, 'error');
+      }
+    }
+
+    async function renameGroup(id, name) {
+      if (!name) {
+        setStatus(t('groupNameEmpty'), 'error');
+        return;
+      }
+
+      try {
+        await request('/groups/' + id, {
+          method: 'PATCH',
+          body: JSON.stringify({ name }),
+        });
+        setStatus(t('groupRenamed'), 'ok');
+        await loadGroups();
+      } catch (error) {
+        setStatus(error.message, 'error');
+      }
+    }
+
+    async function deleteGroup(id) {
+      try {
+        await request('/groups/' + id, { method: 'DELETE' });
+        setStatus(t('groupDeleted'), 'ok');
+        await loadGroups();
+      } catch (error) {
+        setStatus(error.message, 'error');
+      }
+    }
+
+    async function saveSurveyMeta() {
+      if (!state.activeSurveyId) return;
+
+      try {
+        await request('/surveys/' + state.activeSurveyId, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            title: el.surveyTitle.value.trim(),
+            description: el.surveyDescription.value.trim() || null,
+          }),
+        });
+        setStatus(t('surveyUpdated'), 'ok');
+        await loadSurveys();
+        await selectSurvey(state.activeSurveyId);
+      } catch (error) {
+        setStatus(error.message, 'error');
+      }
+    }
+
+    async function resetResponses() {
+      if (!state.activeSurveyId || !state.activeDetail) return;
+
+      const stats = state.activeDetail.stats || {};
+      const total = stats.sessions_count || 0;
+      const finished = stats.finished_sessions_count || 0;
+      const inProgress = stats.in_progress_sessions_count || 0;
+      const message = t('resetConfirm', {
+        total,
+        finished,
+        inProgress,
+      });
+
+      if (!window.confirm(message)) return;
+
+      try {
+        const result = await request('/surveys/' + state.activeSurveyId + '/reset-responses', {
+          method: 'POST',
+        });
+        setStatus(t('responsesCleared', { count: result.deleted_sessions }), 'ok');
+        await loadSurveys();
+        await selectSurvey(state.activeSurveyId);
+      } catch (error) {
+        setStatus(error.message, 'error');
+      }
+    }
+
+    async function deleteSurvey() {
+      if (!state.activeSurveyId) return;
+      if (!window.confirm(t('deleteSurveyConfirm'))) return;
+
+      try {
+        await request('/surveys/' + state.activeSurveyId, { method: 'DELETE' });
+        setStatus(t('surveyDeleted'), 'ok');
+        state.activeSurveyId = null;
+        state.activeDetail = null;
+        el.adminView.classList.add('hidden');
+        el.emptyState.classList.remove('hidden');
+        await loadSurveys();
+
+        if (state.resultsTimer) {
+          window.clearInterval(state.resultsTimer);
+          state.resultsTimer = null;
+        }
+      } catch (error) {
+        setStatus(error.message, 'error');
+      }
+    }
+
+    async function addQuestion() {
+      if (!state.activeSurveyId) return;
+
+      const type = el.newQuestionType.value;
+      const text = el.newQuestionText.value.trim();
+      const options = type === 'single' ? normalizeOptionsText(el.newQuestionOptions.value) : null;
+
+      try {
+        await request('/surveys/' + state.activeSurveyId + '/questions', {
+          method: 'POST',
+          body: JSON.stringify({ type, text, options }),
+        });
+        el.newQuestionText.value = '';
+        el.newQuestionOptions.value = '';
+        setStatus(t('questionAdded'), 'ok');
+        await selectSurvey(state.activeSurveyId);
+        await loadSurveys();
+      } catch (error) {
+        setStatus(error.message, 'error');
+      }
+    }
+
+    async function logout() {
+      await fetch('/admin/logout', {
+        method: 'POST',
+        credentials: 'same-origin',
+      });
+      window.location.href = '/admin';
+    }
+
+    function syncNewQuestionOptions() {
+      el.newQuestionOptionsWrap.classList.toggle('hidden', el.newQuestionType.value !== 'single');
+    }
+
+    el.reloadAll.addEventListener('click', async () => {
+      state.botId = Number(el.botId.value || 1);
+      await loadAll();
+      setStatus(t('dataReloaded'), 'ok');
+    });
+
+    el.langEn.addEventListener('click', () => setLanguage('en'));
+    el.langUk.addEventListener('click', () => setLanguage('uk'));
+    el.themeLight.addEventListener('click', () => setTheme('light'));
+    el.themeDark.addEventListener('click', () => setTheme('dark'));
+    el.logout.addEventListener('click', logout);
+    el.createSurvey.addEventListener('click', createSurvey);
+    el.createGroup.addEventListener('click', createGroup);
+    el.saveSurvey.addEventListener('click', saveSurveyMeta);
+    el.resetResponses.addEventListener('click', resetResponses);
+    el.deleteSurvey.addEventListener('click', deleteSurvey);
+    el.addQuestion.addEventListener('click', addQuestion);
+    el.refreshResults.addEventListener('click', loadResults);
+    el.newQuestionType.addEventListener('change', syncNewQuestionOptions);
+
+    boot();
+  </script>
+</body>
+</html>
