@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+aiogram
+sqlalchemy
+asyncpg
+alembic
+redis
+passlib[bcrypt]
+python-jose
+python-dotenv
+httpx
